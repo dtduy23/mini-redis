@@ -1,0 +1,61 @@
+#pragma once
+
+#include "connection.hpp"
+
+#include <atomic>
+#include <unordered_map>
+
+namespace mini_redis {
+
+/**
+ * EventLoop: vòng lặp sự kiện dùng epoll + O_NONBLOCK.
+ *
+ * Luồng hoạt động:
+ *   1. Nhận server_fd đã bind/listen từ Listener
+ *   2. epoll_wait() chờ sự kiện (block hiệu quả, không tốn CPU)
+ *   3. Nếu sự kiện trên server_fd → accept client mới
+ *   4. Nếu sự kiện trên client_fd → đọc dữ liệu, xử lý, trả response
+ *   5. Lặp lại — 1 thread duy nhất phục vụ N client
+ */
+class EventLoop {
+public:
+    static constexpr int MAX_EVENTS   = 64;   // số event xử lý mỗi lần epoll_wait
+    static constexpr int RECV_BUF_SIZE = 4096;
+
+    explicit EventLoop(int server_fd);
+    ~EventLoop();
+
+    // Không copy, không move — quản lý epoll_fd
+    EventLoop(const EventLoop&)            = delete;
+    EventLoop& operator=(const EventLoop&) = delete;
+
+    // Bắt đầu vòng lặp — block cho đến khi running = false
+    void run(std::atomic<bool>& running);
+
+private:
+    int epoll_fd_;
+    int server_fd_;
+
+    // Lưu tất cả client đang kết nối, key = file descriptor
+    std::unordered_map<int, Connection> connections_;
+
+    // Thêm fd vào epoll để theo dõi
+    void epoll_add(int fd);
+
+    // Xóa fd khỏi epoll
+    void epoll_del(int fd);
+
+    // Đặt fd thành non-blocking
+    static void set_nonblocking(int fd);
+
+    // Xử lý khi server_fd có sự kiện: accept client mới
+    void on_new_client();
+
+    // Xử lý khi client_fd có sự kiện: đọc và phản hồi
+    void on_client_data(int client_fd);
+
+    // Đóng kết nối client và dọn dẹp
+    void close_client(int client_fd);
+};
+
+}  // namespace mini_redis
