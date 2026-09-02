@@ -3,19 +3,9 @@
 #include "connection.hpp"
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <unordered_map>
-
-#include "logging.hpp"
-
-#include <arpa/inet.h>   // inet_ntop
-#include <fcntl.h>       // fcntl, O_NONBLOCK
-#include <sys/epoll.h>   // epoll_create1, epoll_ctl, epoll_wait
-#include <sys/socket.h>  // accept
-#include <unistd.h>      // close
-
-#include <cerrno>
-#include <cstring>
-#include <stdexcept>
 
 namespace mini_redis {
 
@@ -32,8 +22,9 @@ namespace mini_redis {
 
 class EventLoop {
 public:
-    static constexpr int MAX_EVENTS   = 64;   // số event xử lý mỗi lần epoll_wait
-    static constexpr int RECV_BUF_SIZE = 4096;
+    static constexpr int    MAX_EVENTS      = 64;                // số event xử lý mỗi lần epoll_wait
+    static constexpr int    RECV_BUF_SIZE   = 4096;
+    static constexpr size_t MAX_BUFFER_SIZE = 1 * 1024 * 1024;   // 1MB giới hạn bộ đệm chống DoS tràn RAM
 
     explicit EventLoop(int server_fd);
     ~EventLoop();

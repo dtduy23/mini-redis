@@ -1,18 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <netinet/in.h>
-#include "event_loop.hpp"
-#include "logging.hpp"
+#include <netinet/in.h> // sockaddr_in
 
-#include <arpa/inet.h>   // inet_ntop
-#include <netinet/in.h>  // sockaddr_in, htons, INADDR_ANY
-#include <sys/socket.h>  // socket, bind, listen, setsockopt
-#include <unistd.h>       // close, shutdown
-
-#include <cerrno>
-#include <cstring>
-#include <stdexcept>
 namespace mini_redis {
 
 /**

@@ -14,6 +14,8 @@ namespace mini_redis {
  */
 class Connection {
 public:
+    static constexpr size_t DEFAULT_BUF_CAPACITY = 4096;
+
     Connection(int fd, std::string peer_ip, uint16_t peer_port);
     ~Connection();
 

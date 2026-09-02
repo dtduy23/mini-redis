@@ -1,5 +1,17 @@
 #include "event_loop.hpp"
+#include "logging.hpp"
 
+#include <arpa/inet.h>   // inet_ntop
+#include <fcntl.h>       // fcntl, O_NONBLOCK
+#include <netinet/in.h>  // sockaddr_in, INET_ADDRSTRLEN
+#include <netinet/tcp.h> // TCP_NODELAY
+#include <sys/epoll.h>   // epoll_create1, epoll_ctl, epoll_wait
+#include <sys/socket.h>  // accept, recv, send, setsockopt
+#include <unistd.h>      // close
+
+#include <cerrno>
+#include <cstring>
+#include <stdexcept>
 
 namespace mini_redis {
 
@@ -113,6 +125,12 @@ void EventLoop::on_new_client() {
         // Đặt client socket thành non-blocking
         set_nonblocking(client_fd);
 
+        // Bật TCP_NODELAY để loại bỏ độ trễ 40ms của thuật toán Nagle
+        int nodelay_flag = 1;
+        if (::setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay_flag, sizeof(nodelay_flag)) < 0) {
+            logger.warning("setsockopt(TCP_NODELAY) failed on fd={}: {}", client_fd, std::strerror(errno));
+        }
+
         // Lấy IP client để log
         char ip_buf[INET_ADDRSTRLEN] = {};
         ::inet_ntop(AF_INET, &client_addr.sin_addr, ip_buf, sizeof(ip_buf));
@@ -147,7 +165,15 @@ void EventLoop::on_client_data(int client_fd) {
         ssize_t n = ::recv(client_fd, buf, sizeof(buf), 0);
 
         if (n > 0) {
-            // Nhận được data — gồm vào read_buf
+            // Kiểm tra giới hạn buffer để phòng chống tấn công DoS tràn RAM
+            if (conn.read_buf().size() + static_cast<size_t>(n) > MAX_BUFFER_SIZE) {
+                logger.warning("Client fd={} exceeded MAX_BUFFER_SIZE ({} bytes), disconnecting",
+                               client_fd, MAX_BUFFER_SIZE);
+                close_client(client_fd);
+                return;
+            }
+
+            // Nhận được data — gom vào read_buf
             conn.read_buf().append(buf, static_cast<size_t>(n));
 
             // TODO: Kiểm tra read_buf có đủ 1 lệnh RESP chưa?

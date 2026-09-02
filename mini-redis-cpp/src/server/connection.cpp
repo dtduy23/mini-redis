@@ -5,7 +5,10 @@
 namespace mini_redis {
 
 Connection::Connection(int fd, std::string peer_ip, uint16_t peer_port)
-    : fd_(fd), peer_ip_(std::move(peer_ip)), peer_port_(peer_port) {}
+    : fd_(fd), peer_ip_(std::move(peer_ip)), peer_port_(peer_port) {
+    read_buf_.reserve(DEFAULT_BUF_CAPACITY);
+    write_buf_.reserve(DEFAULT_BUF_CAPACITY);
+}
 
 Connection::~Connection() {
     close();
