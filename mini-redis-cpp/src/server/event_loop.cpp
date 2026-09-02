@@ -1,15 +1,5 @@
 #include "event_loop.hpp"
-#include "logging.hpp"
 
-#include <arpa/inet.h>   // inet_ntop
-#include <fcntl.h>       // fcntl, O_NONBLOCK
-#include <sys/epoll.h>   // epoll_create1, epoll_ctl, epoll_wait
-#include <sys/socket.h>  // accept
-#include <unistd.h>      // close
-
-#include <cerrno>
-#include <cstring>
-#include <stdexcept>
 
 namespace mini_redis {
 
@@ -65,14 +55,29 @@ void EventLoop::run(std::atomic<bool>& running) {
 
         // Xử lý từng sự kiện
         for (int i = 0; i < num_events; ++i) {
-            int fd = events[i].data.fd;
+            int      fd = events[i].data.fd;
+            uint32_t ev = events[i].events;
 
             if (fd == server_fd_) {
                 // Server socket sẵn sàng → có client mới muốn kết nối
                 on_new_client();
-            } else {
-                // Client socket sẵn sàng → client gửi data đến
+                continue;
+            }
+
+            // Lỗi hoặc peer đóng kết nối đột ngột
+            if (ev & (EPOLLHUP | EPOLLERR)) {
+                close_client(fd);
+                continue;
+            }
+
+            // Dữ liệu đến từ client
+            if (ev & EPOLLIN) {
                 on_client_data(fd);
+            }
+
+            // Kernel buffer đã có chỗ trống — flush phần còn dư trong write_buf
+            if (ev & EPOLLOUT) {
+                on_client_writable(fd);
             }
         }
     }
@@ -123,10 +128,11 @@ void EventLoop::on_new_client() {
     }
 }
 
-// ─── on_client_data() ─────────────────────────────────────────────────────────
+// ─── on_client_data() ───────────────────────────────────────────────────────────────────
 //
 // Được gọi khi một client_fd có sự kiện đọc.
 // Dùng vòng lặp recv() cho đến khi hết data (EAGAIN) vì non-blocking.
+// Response được đẩy vào write_buf rồi gọi try_flush().
 
 void EventLoop::on_client_data(int client_fd) {
     Logger logger;
@@ -141,13 +147,13 @@ void EventLoop::on_client_data(int client_fd) {
         ssize_t n = ::recv(client_fd, buf, sizeof(buf), 0);
 
         if (n > 0) {
-            // Nhận được data — gom vào read_buf
+            // Nhận được data — gồm vào read_buf
             conn.read_buf().append(buf, static_cast<size_t>(n));
 
             // TODO: Kiểm tra read_buf có đủ 1 lệnh RESP chưa?
-            //       Nếu đủ → parse + dispatch + send response
+            //       Nếu đủ → parse + dispatch + đẩy response vào write_buf
             //       Hiện tại: echo lại toàn bộ
-            ::send(client_fd, conn.read_buf().data(), conn.read_buf().size(), 0);
+            conn.write_buf() += conn.read_buf();
             conn.read_buf().clear();
 
         } else if (n == 0) {
@@ -166,6 +172,67 @@ void EventLoop::on_client_data(int client_fd) {
             close_client(client_fd);
             return;
         }
+    }
+
+    // Flush write_buf sau khi đọc xong
+    try_flush(client_fd);
+}
+
+// ─── on_client_writable() ─────────────────────────────────────────────────────────────
+//
+// Được gọi khi epoll báo EPOLLOUT: kernel buffer đã rỗng, có thể tiếp tục gửi.
+// Chỉ tiếp tục flush phần còn lại trong write_buf.
+
+void EventLoop::on_client_writable(int client_fd) {
+    try_flush(client_fd);
+}
+
+// ─── try_flush() ──────────────────────────────────────────────────────────────────────
+//
+// Cố gắng gửi toàn bộ write_buf của client.
+// Nếu kernel buffer đầy (EAGAIN): lưu phần còn lại, đăng ký EPOLLOUT.
+// Nếu gửi xong: hủy EPOLLOUT (chỉ giữ EPOLLIN).
+
+void EventLoop::try_flush(int client_fd) {
+    Logger logger;
+
+    auto it = connections_.find(client_fd);
+    if (it == connections_.end()) return;
+
+    Connection& conn  = it->second;
+    std::string& wbuf = conn.write_buf();
+
+    if (wbuf.empty()) return;
+
+    size_t offset = 0;
+    while (offset < wbuf.size()) {
+        ssize_t n = ::send(client_fd,
+                           wbuf.data() + offset,
+                           wbuf.size() - offset,
+                           MSG_NOSIGNAL);  // không bị SIGPIPE khi peer đóng
+        if (n > 0) {
+            offset += static_cast<size_t>(n);
+        } else if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;  // kernel buffer đầy, dừng — chờ EPOLLOUT
+            }
+            // Lỗi mạng thật sự
+            logger.warning("send() error on fd={}: {}", client_fd, std::strerror(errno));
+            close_client(client_fd);
+            return;
+        }
+    }
+
+    // Xóa phần đã gửi đi
+    if (offset > 0) {
+        wbuf.erase(0, offset);
+    }
+
+    // Cập nhật epoll: còn data → giữ EPOLLOUT; xong → bỏ EPOLLOUT
+    if (wbuf.empty()) {
+        epoll_mod(client_fd, EPOLLIN);             // chỉ theo dõi read
+    } else {
+        epoll_mod(client_fd, EPOLLIN | EPOLLOUT);  // chờ có chỗ trống để tiếp tục gửi
     }
 }
 
@@ -199,6 +266,17 @@ void EventLoop::epoll_add(int fd) {
 
 void EventLoop::epoll_del(int fd) {
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+}
+
+void EventLoop::epoll_mod(int fd, uint32_t events) {
+    epoll_event ev{};
+    ev.events  = events;
+    ev.data.fd = fd;
+
+    if (::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) < 0) {
+        Logger logger;
+        logger.warning("epoll_ctl(MOD) failed on fd={}: {}", fd, std::strerror(errno));
+    }
 }
 
 void EventLoop::set_nonblocking(int fd) {

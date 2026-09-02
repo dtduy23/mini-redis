@@ -5,6 +5,18 @@
 #include <atomic>
 #include <unordered_map>
 
+#include "logging.hpp"
+
+#include <arpa/inet.h>   // inet_ntop
+#include <fcntl.h>       // fcntl, O_NONBLOCK
+#include <sys/epoll.h>   // epoll_create1, epoll_ctl, epoll_wait
+#include <sys/socket.h>  // accept
+#include <unistd.h>      // close
+
+#include <cerrno>
+#include <cstring>
+#include <stdexcept>
+
 namespace mini_redis {
 
 /**
@@ -17,6 +29,7 @@ namespace mini_redis {
  *   4. Nếu sự kiện trên client_fd → đọc dữ liệu, xử lý, trả response
  *   5. Lặp lại — 1 thread duy nhất phục vụ N client
  */
+
 class EventLoop {
 public:
     static constexpr int MAX_EVENTS   = 64;   // số event xử lý mỗi lần epoll_wait
@@ -45,14 +58,23 @@ private:
     // Xóa fd khỏi epoll
     void epoll_del(int fd);
 
+    // Thay đổi events đang theo dõi (EPOLLIN / EPOLLIN|EPOLLOUT)
+    void epoll_mod(int fd, uint32_t events);
+
     // Đặt fd thành non-blocking
     static void set_nonblocking(int fd);
 
     // Xử lý khi server_fd có sự kiện: accept client mới
     void on_new_client();
 
-    // Xử lý khi client_fd có sự kiện: đọc và phản hồi
+    // Xử lý khi client_fd có sự kiện đọc
     void on_client_data(int client_fd);
+
+    // Xử lý khi client_fd sẵn sàng ghi (EPOLLOUT)
+    void on_client_writable(int client_fd);
+
+    // Flush write_buf của client — đăng ký/hủy EPOLLOUT tùy kết quả
+    void try_flush(int client_fd);
 
     // Đóng kết nối client và dọn dẹp
     void close_client(int client_fd);

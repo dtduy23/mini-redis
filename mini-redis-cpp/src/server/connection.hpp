@@ -32,7 +32,11 @@ public:
 
     // Buffer tích lũy dữ liệu nhận từ client
     // (có thể nhiều recv() mới đủ 1 lệnh Redis)
-    std::string& read_buf() { return read_buf_; }
+    // Buffer tích lũy dữ liệu nhận từ client
+    std::string& read_buf()  { return read_buf_; }
+
+    // Buffer chứa dữ liệu chờ gửi đi (partial write)
+    std::string& write_buf() { return write_buf_; }
 
     void close();
 
@@ -40,7 +44,8 @@ private:
     int         fd_;
     std::string peer_ip_;
     uint16_t    peer_port_;
-    std::string read_buf_;  // dữ liệu chưa xử lý
+    std::string read_buf_;   // dữ liệu nhận chưa xử lý
+    std::string write_buf_;  // dữ liệu chờ gửi đi
 };
 
 }  // namespace mini_redis
