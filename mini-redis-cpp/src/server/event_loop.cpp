@@ -165,7 +165,7 @@ void EventLoop::on_client_data(int client_fd) {
         ssize_t n = ::recv(client_fd, buf, sizeof(buf), 0);
 
         if (n > 0) {
-            // Kiểm tra giới hạn buffer để phòng chống tấn công DoS tràn RAM
+            // Kiểm tra giới hạn buffer để phòng chống DoS tràn RAM
             if (conn.read_buf().size() + static_cast<size_t>(n) > MAX_BUFFER_SIZE) {
                 logger.warning("Client fd={} exceeded MAX_BUFFER_SIZE ({} bytes), disconnecting",
                                client_fd, MAX_BUFFER_SIZE);
@@ -175,12 +175,6 @@ void EventLoop::on_client_data(int client_fd) {
 
             // Nhận được data — gom vào read_buf
             conn.read_buf().append(buf, static_cast<size_t>(n));
-
-            // TODO: Kiểm tra read_buf có đủ 1 lệnh RESP chưa?
-            //       Nếu đủ → parse + dispatch + đẩy response vào write_buf
-            //       Hiện tại: echo lại toàn bộ
-            conn.write_buf() += conn.read_buf();
-            conn.read_buf().clear();
 
         } else if (n == 0) {
             // Client đóng kết nối bình thường (gửi FIN)
@@ -199,6 +193,12 @@ void EventLoop::on_client_data(int client_fd) {
             return;
         }
     }
+
+    // TODO: Kiểm tra read_buf có đủ 1 lệnh RESP chưa?
+    //       Nếu đủ → parse + dispatch + đẩy response vào write_buf
+    //       Hiện tại: echo lại toàn bộ
+    conn.write_buf() += conn.read_buf();
+    conn.read_buf().clear();
 
     // Flush write_buf sau khi đọc xong
     try_flush(client_fd);
