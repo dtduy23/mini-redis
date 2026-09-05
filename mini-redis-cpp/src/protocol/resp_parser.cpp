@@ -1,27 +1,32 @@
 #include "resp_parser.hpp"
 
 #include <charconv>
+#include <string_view>
 
 namespace mini_redis {
+
+namespace {
+
+size_t find_crlf(std::string_view sv, size_t start_pos = 0) {
+    if (start_pos >= sv.size()) return std::string_view::npos;
+    return sv.find("\r\n", start_pos);
+}
+
+bool parse_int64(std::string_view sv, int64_t& out_val) {
+    if (sv.empty()) return false;
+    const char* start = sv.data();
+    const char* end   = sv.data() + sv.size();
+    auto [ptr, ec] = std::from_chars(start, end, out_val);
+    return (ec == std::errc{} && ptr == end);
+}
+
+}  // anonymous namespace
 
 void RespParser::reset() {
     state_ = ParserState::ArrayLen;
     expected_args_ = -1;
     expected_bulk_len_ = -1;
     current_args_.clear();
-}
-
-size_t RespParser::find_crlf(std::string_view sv, size_t start_pos) {
-    if (start_pos >= sv.size()) return std::string_view::npos;
-    return sv.find("\r\n", start_pos);
-}
-
-bool RespParser::parse_int64(std::string_view sv, int64_t& out_val) {
-    if (sv.empty()) return false;
-    const char* start = sv.data();
-    const char* end   = sv.data() + sv.size();
-    auto [ptr, ec] = std::from_chars(start, end, out_val);
-    return (ec == std::errc{} && ptr == end);
 }
 
 ParseResult RespParser::parse(std::string& buffer,

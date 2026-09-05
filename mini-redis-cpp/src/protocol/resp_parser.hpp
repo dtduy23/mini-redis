@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace mini_redis {
@@ -59,9 +58,6 @@ private:
     int64_t                  expected_args_{-1};
     int64_t                  expected_bulk_len_{-1};
     std::vector<std::string> current_args_;
-
-    static size_t find_crlf(std::string_view sv, size_t start_pos = 0);
-    static bool   parse_int64(std::string_view sv, int64_t& out_val);
 };
 
 }  // namespace mini_redis

@@ -9,6 +9,8 @@ namespace mini_redis {
 
 class RespSerializer {
 public:
+    RespSerializer() = delete;
+
     // Simple Strings
     static std::string serialize_simple_string(std::string_view str);
     static std::string serialize_ok();
