@@ -1,5 +1,7 @@
 #pragma once
 
+#include "protocol/resp_parser.hpp"
+
 #include <cstdint>
 #include <string>
 
@@ -34,11 +36,13 @@ public:
 
     // Buffer tích lũy dữ liệu nhận từ client
     // (có thể nhiều recv() mới đủ 1 lệnh Redis)
-    // Buffer tích lũy dữ liệu nhận từ client
     std::string& read_buf()  { return read_buf_; }
 
     // Buffer chứa dữ liệu chờ gửi đi (partial write)
     std::string& write_buf() { return write_buf_; }
+
+    // Trạng thái RESP parser riêng của từng kết nối
+    RespParser& parser() { return parser_; }
 
     void close();
 
@@ -48,6 +52,7 @@ private:
     uint16_t    peer_port_;
     std::string read_buf_;   // dữ liệu nhận chưa xử lý
     std::string write_buf_;  // dữ liệu chờ gửi đi
+    RespParser  parser_;     // parser state machine
 };
 
 }  // namespace mini_redis

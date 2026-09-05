@@ -19,7 +19,8 @@ Connection::Connection(Connection&& other) noexcept
       peer_ip_(std::move(other.peer_ip_)),
       peer_port_(other.peer_port_),
       read_buf_(std::move(other.read_buf_)),
-      write_buf_(std::move(other.write_buf_)) {
+      write_buf_(std::move(other.write_buf_)),
+      parser_(std::move(other.parser_)) {
     other.fd_ = -1;
 }
 
@@ -31,6 +32,7 @@ Connection& Connection::operator=(Connection&& other) noexcept {
         peer_port_ = other.peer_port_;
         read_buf_  = std::move(other.read_buf_);
         write_buf_ = std::move(other.write_buf_);
+        parser_    = std::move(other.parser_);
         other.fd_  = -1;
     }
     return *this;
