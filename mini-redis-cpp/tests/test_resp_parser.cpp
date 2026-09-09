@@ -310,6 +310,48 @@ bool test_large_payload_and_utf8() {
     TEST_ASSERT(cmd[2] == large_val, "payload content matches");
     TEST_ASSERT(buf.empty(), "buffer consumed");
 
+    // 1MB payload (1024 * 1024 bytes)
+    std::string one_mb_val(1024 * 1024, 'M');
+    buf = "*3\r\n$3\r\nSET\r\n$5\r\nkey1m\r\n$" + std::to_string(one_mb_val.size()) + "\r\n" + one_mb_val + "\r\n";
+    cmd.clear();
+    res = parser.parse(buf, cmd, err);
+    TEST_ASSERT(res == ParseResult::Ok, "1MB payload should parse Ok");
+    TEST_ASSERT(cmd.size() == 3, "3 tokens");
+    TEST_ASSERT(cmd[2].size() == 1024 * 1024, "1MB payload length matches");
+    TEST_ASSERT(cmd[2] == one_mb_val, "1MB payload content matches");
+    TEST_ASSERT(buf.empty(), "buffer consumed");
+
+    // 10MB payload (10 * 1024 * 1024 bytes)
+    std::string ten_mb_val(10 * 1024 * 1024, 'Z');
+    buf = "*3\r\n$3\r\nSET\r\n$6\r\nkey10m\r\n$" + std::to_string(ten_mb_val.size()) + "\r\n" + ten_mb_val + "\r\n";
+    cmd.clear();
+    res = parser.parse(buf, cmd, err);
+    TEST_ASSERT(res == ParseResult::Ok, "10MB payload should parse Ok");
+    TEST_ASSERT(cmd.size() == 3, "3 tokens");
+    TEST_ASSERT(cmd[2].size() == 10 * 1024 * 1024, "10MB payload length matches");
+    TEST_ASSERT(cmd[2] == ten_mb_val, "10MB payload content matches");
+    TEST_ASSERT(buf.empty(), "buffer consumed");
+
+    // Phân mảnh 1MB qua các chunk 64KB (Mô phỏng mạng TCP gửi data lớn từng phần)
+    std::string full_1mb_frame = "*3\r\n$3\r\nSET\r\n$8\r\nchunk_1m\r\n$" + std::to_string(one_mb_val.size()) + "\r\n" + one_mb_val + "\r\n";
+    std::string stream_buf;
+    cmd.clear();
+    size_t chunk_size = 64 * 1024; // 64KB mỗi lần nhận
+    for (size_t offset = 0; offset < full_1mb_frame.size(); offset += chunk_size) {
+        size_t len = std::min(chunk_size, full_1mb_frame.size() - offset);
+        stream_buf.append(full_1mb_frame.data() + offset, len);
+        res = parser.parse(stream_buf, cmd, err);
+
+        if (offset + len < full_1mb_frame.size()) {
+            TEST_ASSERT(res == ParseResult::Incomplete, "intermediate 64KB chunks should return Incomplete");
+        } else {
+            TEST_ASSERT(res == ParseResult::Ok, "final chunk completes 1MB payload");
+            TEST_ASSERT(cmd.size() == 3, "3 tokens");
+            TEST_ASSERT(cmd[2].size() == 1024 * 1024, "chunked 1MB payload matches");
+            TEST_ASSERT(stream_buf.empty(), "stream buffer consumed");
+        }
+    }
+
     return true;
 }
 
