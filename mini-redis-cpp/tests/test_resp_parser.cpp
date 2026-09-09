@@ -220,6 +220,21 @@ bool test_malformed_input() {
     buf = "*1\r\n$4\r\nPINGXX";
     res = parser.parse(buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "missing CRLF after bulk data must return Error");
+    TEST_ASSERT(buf.empty(), "buffer must be cleared on Error to prevent infinite loop");
+
+    // Dòng array length quá dài mặc dù có CRLF (*000...001\r\n > 1024 bytes)
+    buf = "*" + std::string(1500, '0') + "1\r\n";
+    res = parser.parse(buf, cmd, err);
+    TEST_ASSERT(res == ParseResult::Error, "array line > MAX_LINE_LEN must return Error even with CRLF");
+    TEST_ASSERT(err.find("too long") != std::string::npos, "error message should mention line too long");
+    TEST_ASSERT(buf.empty(), "buffer must be cleared on Error");
+
+    // Dòng bulk length quá dài mặc dù có CRLF ($000...004\r\n > 1024 bytes)
+    buf = "*1\r\n$" + std::string(1500, '0') + "4\r\nPING\r\n";
+    res = parser.parse(buf, cmd, err);
+    TEST_ASSERT(res == ParseResult::Error, "bulk line > MAX_LINE_LEN must return Error even with CRLF");
+    TEST_ASSERT(err.find("too long") != std::string::npos, "error message should mention line too long");
+    TEST_ASSERT(buf.empty(), "buffer must be cleared on Error");
 
     // Sau khi báo lỗi, parser phải tự reset và sẵn sàng parse lệnh chuẩn kế tiếp
     buf = "*1\r\n$4\r\nPING\r\n";

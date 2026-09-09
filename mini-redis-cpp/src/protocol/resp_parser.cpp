@@ -35,14 +35,12 @@ ParseResult RespParser::parse(std::string& buffer,
     while (!buffer.empty()) {
         switch (state_) {
         case ParserState::ArrayLen: {
-            if (buffer.empty()) {
-                return ParseResult::Incomplete;
-            }
 
             // Client RESP phải bắt đầu bằng '*'
             if (buffer[0] != '*') {
                 out_error = "Protocol error: expected '*'";
                 reset();
+                buffer.clear();
                 return ParseResult::Error;
             }
 
@@ -51,9 +49,17 @@ ParseResult RespParser::parse(std::string& buffer,
                 if (buffer.size() > MAX_LINE_LEN) {
                     out_error = "Protocol error: array length line too long";
                     reset();
+                    buffer.clear();
                     return ParseResult::Error;
                 }
                 return ParseResult::Incomplete;
+            }
+
+            if (crlf > MAX_LINE_LEN) {
+                out_error = "Protocol error: array length line too long";
+                reset();
+                buffer.clear();
+                return ParseResult::Error;
             }
 
             std::string_view num_sv(buffer.data() + 1, crlf - 1);
@@ -61,6 +67,7 @@ ParseResult RespParser::parse(std::string& buffer,
             if (!parse_int64(num_sv, count) || count < 0 || count > MAX_ARGS) {
                 out_error = "Protocol error: invalid multibulk length";
                 reset();
+                buffer.clear();
                 return ParseResult::Error;
             }
 
@@ -74,20 +81,16 @@ ParseResult RespParser::parse(std::string& buffer,
             }
 
             expected_args_ = count;
-            current_args_.clear();
             current_args_.reserve(static_cast<size_t>(count));
             state_ = ParserState::BulkLen;
             break;
         }
 
         case ParserState::BulkLen: {
-            if (buffer.empty()) {
-                return ParseResult::Incomplete;
-            }
-
             if (buffer[0] != '$') {
                 out_error = "Protocol error: expected '$'";
                 reset();
+                buffer.clear();
                 return ParseResult::Error;
             }
 
@@ -96,9 +99,17 @@ ParseResult RespParser::parse(std::string& buffer,
                 if (buffer.size() > MAX_LINE_LEN) {
                     out_error = "Protocol error: bulk length line too long";
                     reset();
+                    buffer.clear();
                     return ParseResult::Error;
                 }
                 return ParseResult::Incomplete;
+            }
+
+            if (crlf > MAX_LINE_LEN) {
+                out_error = "Protocol error: bulk length line too long";
+                reset();
+                buffer.clear();
+                return ParseResult::Error;
             }
 
             std::string_view len_sv(buffer.data() + 1, crlf - 1);
@@ -106,6 +117,7 @@ ParseResult RespParser::parse(std::string& buffer,
             if (!parse_int64(len_sv, bulk_len) || bulk_len < -1 || bulk_len > MAX_BULK_LEN) {
                 out_error = "Protocol error: invalid bulk length";
                 reset();
+                buffer.clear();
                 return ParseResult::Error;
             }
 
@@ -119,7 +131,6 @@ ParseResult RespParser::parse(std::string& buffer,
                     reset();
                     return ParseResult::Ok;
                 }
-                state_ = ParserState::BulkLen;
                 break;
             }
 
@@ -138,6 +149,7 @@ ParseResult RespParser::parse(std::string& buffer,
             if (buffer[expected_bulk_len_] != '\r' || buffer[expected_bulk_len_ + 1] != '\n') {
                 out_error = "Protocol error: bulk data does not end with CRLF";
                 reset();
+                buffer.clear();
                 return ParseResult::Error;
             }
 
