@@ -42,6 +42,19 @@ Connection& Connection::operator=(Connection&& other) noexcept {
     return *this;
 }
 
+std::string_view Connection::unparsed_view() const {
+    if (read_offset_ >= read_buf_.size()) return {};
+    return std::string_view(read_buf_.data() + read_offset_, read_buf_.size() - read_offset_);
+}
+
+void Connection::consume(size_t n) {
+    read_offset_ += n;
+}
+
+size_t Connection::read_offset() const {
+    return read_offset_;
+}
+
 void Connection::maybe_compact() {
     if (read_offset_ >= read_buf_.size()) {
         // Toàn bộ dữ liệu đã được tiêu thụ (O(1) reset)

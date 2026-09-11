@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace mini_redis {
 
@@ -47,17 +48,12 @@ public:
     RespParser& parser() { return parser_; }
 
     // Dữ liệu chưa đọc dưới dạng string_view (Zero-copy)
-    std::string_view unparsed_view() const {
-        if (read_offset_ >= read_buf_.size()) return {};
-        return std::string_view(read_buf_.data() + read_offset_, read_buf_.size() - read_offset_);
-    }
+    std::string_view unparsed_view() const;
 
     // Dịch chuyển con trỏ đọc sau khi parse thành công n bytes (O(1))
-    void consume(size_t n) {
-        read_offset_ += n;
-    }
+    void consume(size_t n);
 
-    size_t read_offset() const { return read_offset_; }
+    size_t read_offset() const;
 
     // Dọn dẹp buffer định kỳ và thu hồi RAM khi vượt ngưỡng (Elastic Buffer)
     void maybe_compact();
