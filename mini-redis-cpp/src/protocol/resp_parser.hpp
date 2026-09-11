@@ -39,11 +39,13 @@ public:
 
     RespParser() = default;
 
-    // Parse 1 lệnh từ buffer.
-    // - Nếu Ok: các token của lệnh được đưa vào out_command, các byte đã parse bị cắt khỏi buffer.
-    // - Nếu Incomplete: buffer giữ nguyên phần byte chưa đọc, state machine bảo lưu trạng thái.
+    // Parse 1 lệnh từ input (string_view) mà không copy hay chỉnh sửa buffer.
+    // - bytes_consumed: số byte đã parse thành công trong lần gọi này (để caller dịch con trỏ).
+    // - Nếu Ok: các token của lệnh được đưa vào out_command.
+    // - Nếu Incomplete: state machine bảo lưu trạng thái để chờ nạp thêm dữ liệu.
     // - Nếu Error: out_error chứa thông điệp lỗi giao thức, state machine được reset.
-    ParseResult parse(std::string& buffer,
+    ParseResult parse(std::string_view input,
+                      size_t& bytes_consumed,
                       std::vector<std::string>& out_command,
                       std::string& out_error);
 

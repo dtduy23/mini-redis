@@ -17,6 +17,8 @@ namespace mini_redis {
 class Connection {
 public:
     static constexpr size_t DEFAULT_BUF_CAPACITY = 4096;
+    static constexpr size_t COMPACT_THRESHOLD    = 32 * 1024; // 32KB: dọn dẹp phần dở dang
+    static constexpr size_t SHRINK_THRESHOLD     = 64 * 1024; // 64KB: thu hồi RAM khi rảnh
 
     Connection(int fd, std::string peer_ip, uint16_t peer_port);
     ~Connection();
@@ -44,6 +46,22 @@ public:
     // Trạng thái RESP parser riêng của từng kết nối
     RespParser& parser() { return parser_; }
 
+    // Dữ liệu chưa đọc dưới dạng string_view (Zero-copy)
+    std::string_view unparsed_view() const {
+        if (read_offset_ >= read_buf_.size()) return {};
+        return std::string_view(read_buf_.data() + read_offset_, read_buf_.size() - read_offset_);
+    }
+
+    // Dịch chuyển con trỏ đọc sau khi parse thành công n bytes (O(1))
+    void consume(size_t n) {
+        read_offset_ += n;
+    }
+
+    size_t read_offset() const { return read_offset_; }
+
+    // Dọn dẹp buffer định kỳ và thu hồi RAM khi vượt ngưỡng (Elastic Buffer)
+    void maybe_compact();
+
     void close();
 
 private:
@@ -52,6 +70,7 @@ private:
     uint16_t    peer_port_;
     std::string read_buf_;   // dữ liệu nhận chưa xử lý
     std::string write_buf_;  // dữ liệu chờ gửi đi
+    size_t      read_offset_{0}; // Con trỏ trỏ vào byte tiếp theo cần parse
     RespParser  parser_;     // parser state machine
 };
 

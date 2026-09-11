@@ -1,5 +1,6 @@
 #include "protocol/resp_parser.hpp"
 #include "protocol/resp_serializer.hpp"
+#include "server/connection.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -10,6 +11,18 @@ using namespace mini_redis;
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
+
+static ParseResult parse_str(RespParser& parser, std::string& buf, std::vector<std::string>& cmd, std::string& err) {
+    size_t consumed = 0;
+    ParseResult res = parser.parse(buf, consumed, cmd, err);
+    if (consumed > 0) {
+        buf.erase(0, consumed);
+    }
+    if (res == ParseResult::Error) {
+        buf.clear();
+    }
+    return res;
+}
 
 #define TEST_ASSERT(cond, msg) \
     do { \
@@ -39,7 +52,7 @@ bool test_single_commands() {
 
     // PING: *1\r\n$4\r\nPING\r\n
     std::string buf = "*1\r\n$4\r\nPING\r\n";
-    ParseResult res = parser.parse(buf, cmd, err);
+    ParseResult res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "PING should parse Ok");
     TEST_ASSERT(cmd.size() == 1 && cmd[0] == "PING", "PING token matches");
     TEST_ASSERT(buf.empty(), "buffer should be fully consumed");
@@ -47,7 +60,7 @@ bool test_single_commands() {
     // SET key value: *3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
     buf = "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "SET should parse Ok");
     TEST_ASSERT(cmd.size() == 3, "SET should have 3 tokens");
     TEST_ASSERT(cmd[0] == "SET" && cmd[1] == "foo" && cmd[2] == "bar", "SET tokens match");
@@ -56,7 +69,7 @@ bool test_single_commands() {
     // Empty array: *0\r\n
     buf = "*0\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "*0 should parse Ok");
     TEST_ASSERT(cmd.empty(), "*0 should have 0 tokens");
     TEST_ASSERT(buf.empty(), "buffer should be fully consumed");
@@ -74,7 +87,7 @@ bool test_binary_safety_and_special_chars() {
     // "hello\r\nworld" có độ dài 12 bytes
     std::string payload = "hello\r\nworld";
     std::string buf = "*2\r\n$4\r\nECHO\r\n$12\r\nhello\r\nworld\r\n";
-    ParseResult res = parser.parse(buf, cmd, err);
+    ParseResult res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "ECHO with embedded CRLF should parse Ok");
     TEST_ASSERT(cmd.size() == 2, "2 tokens");
     TEST_ASSERT(cmd[1] == payload, "payload with embedded CRLF matches exactly");
@@ -84,7 +97,7 @@ bool test_binary_safety_and_special_chars() {
     std::string null_payload("ab\0cd", 5);
     buf = "*2\r\n$4\r\nECHO\r\n$5\r\n" + null_payload + "\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "payload with null byte should parse Ok");
     TEST_ASSERT(cmd.size() == 2, "2 tokens");
     TEST_ASSERT(cmd[1].size() == 5, "payload size is 5");
@@ -94,7 +107,7 @@ bool test_binary_safety_and_special_chars() {
     // Empty bulk string ($0\r\n\r\n)
     buf = "*2\r\n$3\r\nGET\r\n$0\r\n\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "empty bulk string should parse Ok");
     TEST_ASSERT(cmd.size() == 2, "2 tokens");
     TEST_ASSERT(cmd[1] == "", "empty string token matches");
@@ -103,7 +116,7 @@ bool test_binary_safety_and_special_chars() {
     // Null bulk string ($-1\r\n)
     buf = "*2\r\n$3\r\nGET\r\n$-1\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "null bulk string should parse Ok");
     TEST_ASSERT(cmd.size() == 2, "2 tokens");
     TEST_ASSERT(cmd[1] == "", "null bulk string mapped to empty string");
@@ -123,7 +136,7 @@ bool test_fragmented_stream() {
     // Nạp từng byte một vào buffer và gọi parse()
     for (size_t i = 0; i < full_frame.size(); ++i) {
         buffer.push_back(full_frame[i]);
-        ParseResult res = parser.parse(buffer, cmd, err);
+        ParseResult res = parse_str(parser, buffer, cmd, err);
 
         if (i < full_frame.size() - 1) {
             TEST_ASSERT(res == ParseResult::Incomplete, "intermediate bytes must return Incomplete");
@@ -154,25 +167,25 @@ bool test_pipelining() {
     std::string err;
 
     // Lệnh 1: PING
-    ParseResult res1 = parser.parse(buffer, cmd, err);
+    ParseResult res1 = parse_str(parser, buffer, cmd, err);
     TEST_ASSERT(res1 == ParseResult::Ok, "cmd 1 parse Ok");
     TEST_ASSERT(cmd.size() == 1 && cmd[0] == "PING", "cmd 1 matches");
 
     // Lệnh 2: ECHO hi
     cmd.clear();
-    ParseResult res2 = parser.parse(buffer, cmd, err);
+    ParseResult res2 = parse_str(parser, buffer, cmd, err);
     TEST_ASSERT(res2 == ParseResult::Ok, "cmd 2 parse Ok");
     TEST_ASSERT(cmd.size() == 2 && cmd[0] == "ECHO" && cmd[1] == "hi", "cmd 2 matches");
 
     // Lệnh 3: GET foo
     cmd.clear();
-    ParseResult res3 = parser.parse(buffer, cmd, err);
+    ParseResult res3 = parse_str(parser, buffer, cmd, err);
     TEST_ASSERT(res3 == ParseResult::Ok, "cmd 3 parse Ok");
     TEST_ASSERT(cmd.size() == 2 && cmd[0] == "GET" && cmd[1] == "foo", "cmd 3 matches");
 
     // Hết buffer
     cmd.clear();
-    ParseResult res4 = parser.parse(buffer, cmd, err);
+    ParseResult res4 = parse_str(parser, buffer, cmd, err);
     TEST_ASSERT(res4 == ParseResult::Incomplete, "empty buffer returns Incomplete");
     TEST_ASSERT(buffer.empty(), "buffer completely empty");
 
@@ -187,51 +200,51 @@ bool test_malformed_input() {
 
     // Ký tự đầu không phải '*'
     std::string buf = "+OK\r\n";
-    ParseResult res = parser.parse(buf, cmd, err);
+    ParseResult res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "non-* array prefix must return Error");
     TEST_ASSERT(!err.empty(), "error message populated");
 
     // Độ dài array không hợp lệ
     buf = "*abc\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "invalid array len must return Error");
 
     // Độ dài array âm
     buf = "*-5\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "negative array count must return Error");
 
     // Bulk string thiếu ký tự '$'
     buf = "*1\r\n4\r\nPING\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "missing $ must return Error");
 
     // Bulk length không hợp lệ
     buf = "*1\r\n$abc\r\nPING\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "invalid bulk len must return Error");
 
     // Bulk length < -1
     buf = "*1\r\n$-2\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "bulk len < -1 must return Error");
 
     // Bulk data không kết thúc bằng CRLF
     buf = "*1\r\n$4\r\nPINGXX";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "missing CRLF after bulk data must return Error");
     TEST_ASSERT(buf.empty(), "buffer must be cleared on Error to prevent infinite loop");
 
     // Dòng array length quá dài mặc dù có CRLF (*000...001\r\n > 1024 bytes)
     buf = "*" + std::string(1500, '0') + "1\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "array line > MAX_LINE_LEN must return Error even with CRLF");
     TEST_ASSERT(err.find("too long") != std::string::npos, "error message should mention line too long");
     TEST_ASSERT(buf.empty(), "buffer must be cleared on Error");
 
     // Dòng bulk length quá dài mặc dù có CRLF ($000...004\r\n > 1024 bytes)
     buf = "*1\r\n$" + std::string(1500, '0') + "4\r\nPING\r\n";
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Error, "bulk line > MAX_LINE_LEN must return Error even with CRLF");
     TEST_ASSERT(err.find("too long") != std::string::npos, "error message should mention line too long");
     TEST_ASSERT(buf.empty(), "buffer must be cleared on Error");
@@ -240,7 +253,7 @@ bool test_malformed_input() {
     buf = "*1\r\n$4\r\nPING\r\n";
     cmd.clear();
     err.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "parser must recover after error");
     TEST_ASSERT(cmd.size() == 1 && cmd[0] == "PING", "recovered parse matches");
 
@@ -293,7 +306,7 @@ bool test_large_payload_and_utf8() {
     // UTF-8: Tiếng Việt có dấu
     std::string utf8_val = "Xin chào Redis từ C++20!";
     std::string buf = "*3\r\n$3\r\nSET\r\n$3\r\nmsg\r\n$" + std::to_string(utf8_val.size()) + "\r\n" + utf8_val + "\r\n";
-    ParseResult res = parser.parse(buf, cmd, err);
+    ParseResult res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "UTF-8 SET should parse Ok");
     TEST_ASSERT(cmd.size() == 3, "3 tokens");
     TEST_ASSERT(cmd[2] == utf8_val, "UTF-8 payload matches");
@@ -303,7 +316,7 @@ bool test_large_payload_and_utf8() {
     std::string large_val(100 * 1024, 'X');
     buf = "*3\r\n$3\r\nSET\r\n$5\r\nlarge\r\n$" + std::to_string(large_val.size()) + "\r\n" + large_val + "\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "100KB payload should parse Ok");
     TEST_ASSERT(cmd.size() == 3, "3 tokens");
     TEST_ASSERT(cmd[2].size() == 100 * 1024, "payload length matches");
@@ -314,7 +327,7 @@ bool test_large_payload_and_utf8() {
     std::string one_mb_val(1024 * 1024, 'M');
     buf = "*3\r\n$3\r\nSET\r\n$5\r\nkey1m\r\n$" + std::to_string(one_mb_val.size()) + "\r\n" + one_mb_val + "\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "1MB payload should parse Ok");
     TEST_ASSERT(cmd.size() == 3, "3 tokens");
     TEST_ASSERT(cmd[2].size() == 1024 * 1024, "1MB payload length matches");
@@ -325,7 +338,7 @@ bool test_large_payload_and_utf8() {
     std::string ten_mb_val(10 * 1024 * 1024, 'Z');
     buf = "*3\r\n$3\r\nSET\r\n$6\r\nkey10m\r\n$" + std::to_string(ten_mb_val.size()) + "\r\n" + ten_mb_val + "\r\n";
     cmd.clear();
-    res = parser.parse(buf, cmd, err);
+    res = parse_str(parser, buf, cmd, err);
     TEST_ASSERT(res == ParseResult::Ok, "10MB payload should parse Ok");
     TEST_ASSERT(cmd.size() == 3, "3 tokens");
     TEST_ASSERT(cmd[2].size() == 10 * 1024 * 1024, "10MB payload length matches");
@@ -340,7 +353,7 @@ bool test_large_payload_and_utf8() {
     for (size_t offset = 0; offset < full_1mb_frame.size(); offset += chunk_size) {
         size_t len = std::min(chunk_size, full_1mb_frame.size() - offset);
         stream_buf.append(full_1mb_frame.data() + offset, len);
-        res = parser.parse(stream_buf, cmd, err);
+        res = parse_str(parser, stream_buf, cmd, err);
 
         if (offset + len < full_1mb_frame.size()) {
             TEST_ASSERT(res == ParseResult::Incomplete, "intermediate 64KB chunks should return Incomplete");
@@ -379,7 +392,7 @@ bool test_variable_chunk_streaming() {
             offset += take;
 
             while (true) {
-                ParseResult res = parser.parse(buffer, cmd, err);
+                ParseResult res = parse_str(parser, buffer, cmd, err);
                 if (res == ParseResult::Ok) {
                     TEST_ASSERT(cmd.size() == 2, "ECHO has 2 tokens");
                     TEST_ASSERT(cmd[0] == "ECHO", "cmd is ECHO");
@@ -400,6 +413,74 @@ bool test_variable_chunk_streaming() {
     return true;
 }
 
+// 9. Kiểm tra Connection Buffer Cursor & Elastic Memory Management
+bool test_connection_buffer_management() {
+    Connection conn(-1, "127.0.0.1", 6379);
+
+    // 1. Kiểm tra unparsed_view ban đầu rỗng
+    TEST_ASSERT(conn.unparsed_view().empty(), "initially unparsed view is empty");
+    TEST_ASSERT(conn.read_offset() == 0, "initial offset is 0");
+
+    // 2. Nạp nhiều lệnh pipelined vào read_buf mà không cần can thiệp parser
+    conn.read_buf() += "*1\r\n$4\r\nPING\r\n*2\r\n$4\r\nECHO\r\n$2\r\nhi\r\n";
+    TEST_ASSERT(conn.unparsed_view().size() == 36, "36 bytes unparsed");
+
+    // 3. Parse lệnh 1 (PING) với zero-copy string_view
+    std::vector<std::string> cmd;
+    std::string err;
+    size_t consumed = 0;
+    ParseResult res = conn.parser().parse(conn.unparsed_view(), consumed, cmd, err);
+    TEST_ASSERT(res == ParseResult::Ok, "PING parsed Ok");
+    TEST_ASSERT(cmd.size() == 1 && cmd[0] == "PING", "PING token matches");
+    TEST_ASSERT(consumed == 14, "PING consumed exactly 14 bytes");
+
+    // Dịch con trỏ O(1), không copy hay erase bất kỳ byte nào!
+    conn.consume(consumed);
+    TEST_ASSERT(conn.read_offset() == 14, "offset advanced to 14");
+    TEST_ASSERT(conn.unparsed_view().size() == 22, "22 bytes remaining for ECHO");
+
+    // 4. Parse lệnh 2 (ECHO hi)
+    cmd.clear();
+    consumed = 0;
+    res = conn.parser().parse(conn.unparsed_view(), consumed, cmd, err);
+    TEST_ASSERT(res == ParseResult::Ok, "ECHO parsed Ok");
+    TEST_ASSERT(cmd.size() == 2 && cmd[0] == "ECHO" && cmd[1] == "hi", "ECHO tokens match");
+    TEST_ASSERT(consumed == 22, "ECHO consumed 22 bytes");
+
+    conn.consume(consumed);
+    TEST_ASSERT(conn.read_offset() == 36, "offset is 36 (all consumed)");
+    TEST_ASSERT(conn.unparsed_view().empty(), "unparsed view is empty");
+
+    // 5. maybe_compact(): Đã đọc hết -> reset về 0 trong O(1)
+    conn.maybe_compact();
+    TEST_ASSERT(conn.read_offset() == 0, "offset reset to 0 after compaction");
+    TEST_ASSERT(conn.read_buf().empty(), "read_buf cleared");
+
+    // 6. Kiểm tra Elastic Shrink (phòng chống Memory Hoarding):
+    // Giả lập nhận 100KB payload lớn (vượt ngưỡng 64KB)
+    conn.read_buf().append(100 * 1024, 'X');
+    TEST_ASSERT(conn.read_buf().capacity() >= 100 * 1024, "capacity expanded >= 100KB");
+
+    // Tiêu thụ hết 100KB
+    conn.consume(conn.read_buf().size());
+    // Dọn dẹp -> phải tự động shrink_to_fit() về <= 64KB (mức chuẩn 4KB)
+    conn.maybe_compact();
+    TEST_ASSERT(conn.read_buf().capacity() <= Connection::SHRINK_THRESHOLD, "capacity shrank back <= 64KB");
+    TEST_ASSERT(conn.read_offset() == 0, "offset reset to 0");
+
+    // 7. Kiểm tra Partial Compaction (khi con trỏ trôi quá COMPACT_THRESHOLD = 32KB)
+    conn.read_buf().assign(40 * 1024, 'A');
+    conn.consume(35 * 1024); // Đã đọc 35KB, còn 5KB dở dang
+    TEST_ASSERT(conn.read_offset() == 35 * 1024, "offset is 35KB");
+
+    conn.maybe_compact();
+    TEST_ASSERT(conn.read_offset() == 0, "offset reset to 0 after partial compaction");
+    TEST_ASSERT(conn.read_buf().size() == 5 * 1024, "remaining 5KB shifted to head");
+    TEST_ASSERT(conn.unparsed_view().size() == 5 * 1024, "unparsed view has 5KB");
+
+    return true;
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "  RUNNING RESP PARSER & SERIALIZER TESTS\n";
@@ -413,6 +494,7 @@ int main() {
     RUN_TEST(test_serializer);
     RUN_TEST(test_large_payload_and_utf8);
     RUN_TEST(test_variable_chunk_streaming);
+    RUN_TEST(test_connection_buffer_management);
 
     std::cout << "========================================\n";
     std::cout << "Results: " << g_tests_passed << "/" << g_tests_run << " tests passed.\n";

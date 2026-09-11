@@ -29,27 +29,30 @@ void RespParser::reset() {
     current_args_.clear();
 }
 
-ParseResult RespParser::parse(std::string& buffer,
+ParseResult RespParser::parse(std::string_view input,
+                              size_t& bytes_consumed,
                               std::vector<std::string>& out_command,
                               std::string& out_error) {
-    while (!buffer.empty()) {
+    bytes_consumed = 0;
+
+    while (bytes_consumed < input.size()) {
+        std::string_view cur = input.substr(bytes_consumed);
+
         switch (state_) {
         case ParserState::ArrayLen: {
 
             // Client RESP phải bắt đầu bằng '*'
-            if (buffer[0] != '*') {
+            if (cur[0] != '*') {
                 out_error = "Protocol error: expected '*'";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            size_t crlf = find_crlf(buffer, 1);
+            size_t crlf = find_crlf(cur, 1);
             if (crlf == std::string_view::npos) {
-                if (buffer.size() > MAX_LINE_LEN) {
+                if (cur.size() > MAX_LINE_LEN) {
                     out_error = "Protocol error: array length line too long";
                     reset();
-                    buffer.clear();
                     return ParseResult::Error;
                 }
                 return ParseResult::Incomplete;
@@ -58,20 +61,18 @@ ParseResult RespParser::parse(std::string& buffer,
             if (crlf > MAX_LINE_LEN) {
                 out_error = "Protocol error: array length line too long";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            std::string_view num_sv(buffer.data() + 1, crlf - 1);
+            std::string_view num_sv = cur.substr(1, crlf - 1);
             int64_t count = 0;
             if (!parse_int64(num_sv, count) || count < 0 || count > MAX_ARGS) {
                 out_error = "Protocol error: invalid multibulk length";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            buffer.erase(0, crlf + 2);
+            bytes_consumed += crlf + 2;
 
             if (count == 0) {
                 // Mảng rỗng (*0\r\n): không có đối số nào
@@ -87,19 +88,17 @@ ParseResult RespParser::parse(std::string& buffer,
         }
 
         case ParserState::BulkLen: {
-            if (buffer[0] != '$') {
+            if (cur[0] != '$') {
                 out_error = "Protocol error: expected '$'";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            size_t crlf = find_crlf(buffer, 1);
+            size_t crlf = find_crlf(cur, 1);
             if (crlf == std::string_view::npos) {
-                if (buffer.size() > MAX_LINE_LEN) {
+                if (cur.size() > MAX_LINE_LEN) {
                     out_error = "Protocol error: bulk length line too long";
                     reset();
-                    buffer.clear();
                     return ParseResult::Error;
                 }
                 return ParseResult::Incomplete;
@@ -108,20 +107,18 @@ ParseResult RespParser::parse(std::string& buffer,
             if (crlf > MAX_LINE_LEN) {
                 out_error = "Protocol error: bulk length line too long";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            std::string_view len_sv(buffer.data() + 1, crlf - 1);
+            std::string_view len_sv = cur.substr(1, crlf - 1);
             int64_t bulk_len = 0;
             if (!parse_int64(len_sv, bulk_len) || bulk_len < -1 || bulk_len > MAX_BULK_LEN) {
                 out_error = "Protocol error: invalid bulk length";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            buffer.erase(0, crlf + 2);
+            bytes_consumed += crlf + 2;
 
             if (bulk_len == -1) {
                 // Null bulk string ($-1\r\n): không có payload tiếp theo
@@ -141,20 +138,19 @@ ParseResult RespParser::parse(std::string& buffer,
 
         case ParserState::BulkData: {
             size_t required = static_cast<size_t>(expected_bulk_len_) + 2; // payload + \r\n
-            if (buffer.size() < required) {
+            if (cur.size() < required) {
                 return ParseResult::Incomplete;
             }
 
             // Kiểm tra CRLF ở cuối bulk string
-            if (buffer[expected_bulk_len_] != '\r' || buffer[expected_bulk_len_ + 1] != '\n') {
+            if (cur[expected_bulk_len_] != '\r' || cur[expected_bulk_len_ + 1] != '\n') {
                 out_error = "Protocol error: bulk data does not end with CRLF";
                 reset();
-                buffer.clear();
                 return ParseResult::Error;
             }
 
-            current_args_.emplace_back(buffer.data(), static_cast<size_t>(expected_bulk_len_));
-            buffer.erase(0, required);
+            current_args_.emplace_back(cur.data(), static_cast<size_t>(expected_bulk_len_));
+            bytes_consumed += required;
 
             if (current_args_.size() == static_cast<size_t>(expected_args_)) {
                 out_command = std::move(current_args_);
