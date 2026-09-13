@@ -2,6 +2,7 @@
 
 #include "protocol/resp_parser.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -58,6 +59,10 @@ public:
     // Dọn dẹp buffer định kỳ và thu hồi RAM khi vượt ngưỡng (Elastic Buffer)
     void maybe_compact();
 
+    // Cập nhật thời điểm hoạt động cuối (chống idle timeout)
+    void update_last_active() noexcept;
+    std::chrono::steady_clock::time_point last_active() const noexcept;
+
     void close();
 
 private:
@@ -68,6 +73,7 @@ private:
     std::string write_buf_;  // dữ liệu chờ gửi đi
     size_t      read_offset_{0}; // Con trỏ trỏ vào byte tiếp theo cần parse
     RespParser  parser_;     // parser state machine
+    std::chrono::steady_clock::time_point last_active_{std::chrono::steady_clock::now()};
 };
 
 }  // namespace mini_redis

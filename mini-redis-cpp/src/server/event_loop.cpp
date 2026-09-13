@@ -8,6 +8,7 @@
 #include <netinet/tcp.h> // TCP_NODELAY
 #include <sys/epoll.h>   // epoll_create1, epoll_ctl, epoll_wait
 #include <sys/socket.h>  // accept, recv, send, setsockopt
+#include <sys/timerfd.h> // timerfd_create, timerfd_settime
 #include <unistd.h>      // close
 
 #include <cerrno>
@@ -19,7 +20,7 @@ namespace mini_redis {
 // ─── Constructor / Destructor ─────────────────────────────────────────────────
 
 EventLoop::EventLoop(int server_fd)
-    : epoll_fd_(-1), server_fd_(server_fd) {
+    : epoll_fd_(-1), server_fd_(server_fd), timer_fd_(-1) {
     Logger logger;
 
     // Tạo epoll instance
@@ -35,10 +36,38 @@ EventLoop::EventLoop(int server_fd)
     // Đăng ký server_fd vào epoll để theo dõi kết nối mới
     epoll_add(server_fd_);
 
-    logger.debug("epoll created (fd={}), watching server_fd={}", epoll_fd_, server_fd_);
+    // Khởi tạo timerfd cho Active Expiry và Client Idle Timeout (chu kỳ 100ms)
+    timer_fd_ = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (timer_fd_ < 0) {
+        ::close(epoll_fd_);
+        throw std::runtime_error(
+            std::string("timerfd_create() failed: ") + std::strerror(errno));
+    }
+
+    itimerspec its{};
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = TIMER_INTERVAL_MS * 1000000LL;
+    its.it_value.tv_sec = 0;
+    its.it_value.tv_nsec = TIMER_INTERVAL_MS * 1000000LL;
+
+    if (::timerfd_settime(timer_fd_, 0, &its, nullptr) < 0) {
+        ::close(timer_fd_);
+        ::close(epoll_fd_);
+        throw std::runtime_error(
+            std::string("timerfd_settime() failed: ") + std::strerror(errno));
+    }
+
+    epoll_add(timer_fd_);
+
+    logger.debug("epoll created (fd={}), watching server_fd={}, timer_fd={} (interval={}ms)",
+                 epoll_fd_, server_fd_, timer_fd_, TIMER_INTERVAL_MS);
 }
 
 EventLoop::~EventLoop() {
+    if (timer_fd_ >= 0) {
+        epoll_del(timer_fd_);
+        ::close(timer_fd_);
+    }
     if (epoll_fd_ >= 0) {
         ::close(epoll_fd_);
     }
@@ -74,6 +103,12 @@ void EventLoop::run(std::atomic<bool>& running) {
             if (fd == server_fd_) {
                 // Server socket sẵn sàng → có client mới muốn kết nối
                 on_new_client();
+                continue;
+            }
+
+            if (fd == timer_fd_) {
+                // Nhịp timer: quét dọn key quá hạn (Active Expiry) và đá văng client idle
+                on_timer_tick();
                 continue;
             }
 
@@ -176,6 +211,7 @@ void EventLoop::on_client_data(int client_fd) {
 
             // Nhận được data — gom vào read_buf
             conn.read_buf().append(buf, static_cast<size_t>(n));
+            conn.update_last_active();
 
         } else if (n == 0) {
             // Client đóng kết nối bình thường (gửi FIN)
@@ -299,6 +335,50 @@ void EventLoop::close_client(int client_fd) {
 
     epoll_del(client_fd);
     connections_.erase(it);  // destructor của Connection gọi close(fd)
+}
+
+// ─── Timer & Idle Timeout ─────────────────────────────────────────────────────
+
+void EventLoop::on_timer_tick() {
+    uint64_t expirations = 0;
+    ssize_t s = ::read(timer_fd_, &expirations, sizeof(expirations));
+    if (s < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return;
+    }
+    if (s != sizeof(expirations)) {
+        Logger logger;
+        logger.warning("read() from timerfd failed: {}", std::strerror(errno));
+    }
+
+    // 1. Quét dọn chủ động các key hết hạn (Active Expiry Cycle)
+    store_.expiry().active_expire_cycle(store_);
+
+    // 2. Quét chống ngâm kết nối (Client Idle Timeout)
+    check_client_timeouts();
+}
+
+void EventLoop::check_client_timeouts() {
+    if (client_idle_timeout_ <= std::chrono::seconds::zero()) {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    std::vector<int> timed_out_clients;
+
+    for (const auto& [fd, conn] : connections_) {
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - conn.last_active()) >= client_idle_timeout_) {
+            timed_out_clients.push_back(fd);
+        }
+    }
+
+    if (!timed_out_clients.empty()) {
+        Logger logger;
+        for (int fd : timed_out_clients) {
+            logger.warning("Client fd={} idle timeout exceeded ({}s), closing connection",
+                           fd, client_idle_timeout_.count());
+            close_client(fd);
+        }
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

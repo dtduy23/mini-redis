@@ -44,9 +44,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    std::chrono::seconds idle_timeout = mini_redis::EventLoop::DEFAULT_CLIENT_IDLE_TIMEOUT;
+    if (argc >= 3) {
+        idle_timeout = std::chrono::seconds(std::atoi(argv[2]));
+    }
+
     // Khởi tạo server — throw nếu không bind được port
     try {
-        mini_redis::Listener listener(port);
+        mini_redis::Listener listener(port, idle_timeout);
 
         // Đăng ký signal handler sau khi listener sẵn sàng
         g_listener = &listener;

@@ -21,7 +21,8 @@ Connection::Connection(Connection&& other) noexcept
       read_buf_(std::move(other.read_buf_)),
       write_buf_(std::move(other.write_buf_)),
       read_offset_(other.read_offset_),
-      parser_(std::move(other.parser_)) {
+      parser_(std::move(other.parser_)),
+      last_active_(other.last_active_) {
     other.fd_          = -1;
     other.read_offset_ = 0;
 }
@@ -36,6 +37,7 @@ Connection& Connection::operator=(Connection&& other) noexcept {
         write_buf_   = std::move(other.write_buf_);
         read_offset_ = other.read_offset_;
         parser_      = std::move(other.parser_);
+        last_active_ = other.last_active_;
         other.fd_          = -1;
         other.read_offset_ = 0;
     }
@@ -71,6 +73,14 @@ void Connection::maybe_compact() {
         read_buf_.erase(0, read_offset_);
         read_offset_ = 0;
     }
+}
+
+void Connection::update_last_active() noexcept {
+    last_active_ = std::chrono::steady_clock::now();
+}
+
+std::chrono::steady_clock::time_point Connection::last_active() const noexcept {
+    return last_active_;
 }
 
 void Connection::close() {

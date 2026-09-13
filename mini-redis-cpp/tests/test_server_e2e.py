@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-E2E Integration Test Suite for mini-redis-cpp (Section 5.3: Data Store & Commands)
-Kiểm tra server thực tế chạy qua POSIX socket TCP với giao thức RESP2.
+E2E Integration Test Suite for mini-redis-cpp (Section 5.3 & Section 5.4)
+Kiểm tra server thực tế chạy qua POSIX socket TCP với giao thức RESP2:
+- Core commands (PING, ECHO, SET, GET, DEL, EXISTS, INCR, TYPE, FLUSHALL)
+- Expiry & TTL commands (EXPIRE, TTL, PERSIST)
+- Active Expiry qua Linux timerfd (100ms cycle)
+- Client Idle Timeout (ngắt kết nối client ngâm quá hạn)
+- Pipeline & Concurrent clients
 """
 
 import os
@@ -15,6 +20,7 @@ SERVER_BIN = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../build/src/mini_redis_cpp")
 )
 TEST_PORT = 7895
+TIMEOUT_TEST_PORT = 7896
 HOST = "127.0.0.1"
 
 
@@ -39,9 +45,9 @@ def recv_exact(sock, n):
     return bytes(data)
 
 
-def start_server(port=TEST_PORT):
+def start_server(port=TEST_PORT, idle_timeout=300):
     proc = subprocess.Popen(
-        [SERVER_BIN, str(port)],
+        [SERVER_BIN, str(port), str(idle_timeout)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -143,10 +149,51 @@ def main():
         assert pipe_resp == expected_pipeline, f"Pipeline mismatch: {pipe_resp!r}"
         print("  [OK] Pipelined batch execution")
 
+        # 13. Section 5.4: EXPIRE & TTL
+        print("\n--- Section 5.4: Expiry & TTL E2E Tests ---")
+        send_and_expect(["SET", "ttl_key", "temp_val"], b"+OK\r\n", "SET ttl_key")
+        send_and_expect(["TTL", "ttl_key"], b":-1\r\n", "TTL before EXPIRE -> :-1")
+
+        send_and_expect(["EXPIRE", "ttl_key", "2"], b":1\r\n", "EXPIRE ttl_key 2 -> :1")
+        # Kiểm tra TTL trả về số giây còn lại (1 hoặc 2)
+        s.sendall(encode_resp_cmd("TTL", "ttl_key"))
+        ttl_resp = recv_exact(s, 4)  # :1\r\n hoặc :2\r\n
+        assert ttl_resp in (b":1\r\n", b":2\r\n"), f"Unexpected TTL response: {ttl_resp!r}"
+        print(f"  [OK] TTL ttl_key returns {ttl_resp.decode().strip()}")
+
+        print("  Waiting 2.1s for ttl_key to expire...")
+        time.sleep(2.1)
+        send_and_expect(["TTL", "ttl_key"], b":-2\r\n", "TTL after expiration -> :-2")
+        send_and_expect(["GET", "ttl_key"], b"$-1\r\n", "GET after expiration -> $-1 (lazy eviction)")
+
+        # 14. Section 5.4: PERSIST
+        send_and_expect(["SET", "persist_key", "forever"], b"+OK\r\n", "SET persist_key")
+        send_and_expect(["EXPIRE", "persist_key", "100"], b":1\r\n", "EXPIRE persist_key 100")
+        send_and_expect(["PERSIST", "persist_key"], b":1\r\n", "PERSIST persist_key -> :1")
+        send_and_expect(["TTL", "persist_key"], b":-1\r\n", "TTL after PERSIST -> :-1")
+        send_and_expect(["PERSIST", "persist_key"], b":0\r\n", "PERSIST again -> :0")
+        send_and_expect(["GET", "persist_key"], b"$7\r\nforever\r\n", "GET persist_key -> forever")
+
+        # 15. Section 5.4: EXPIRE 0 / negative
+        send_and_expect(["SET", "del_now", "bye"], b"+OK\r\n", "SET del_now")
+        send_and_expect(["EXPIRE", "del_now", "0"], b":1\r\n", "EXPIRE 0 -> :1")
+        send_and_expect(["GET", "del_now"], b"$-1\r\n", "GET del_now -> $-1")
+
+        # 16. Section 5.4: Active Expiry via timerfd
+        print("  Testing Active Expiry background sweep (timerfd 100ms)...")
+        for i in range(20):
+            send_and_expect(["SET", f"sweep_{i}", "x"], b"+OK\r\n", f"SET sweep_{i}")
+            send_and_expect(["EXPIRE", f"sweep_{i}", "1"], b":1\r\n", f"EXPIRE sweep_{i} 1")
+
+        print("  Waiting 1.3s for timerfd background sweep...")
+        time.sleep(1.3)
+        # Các key đã được dọn bởi active_expire_cycle trong background timerfd
+        send_and_expect(["EXISTS"] + [f"sweep_{i}" for i in range(20)], b":0\r\n", "Active expiry swept all 20 keys (EXISTS -> 0)")
+
         s.close()
 
-        # 13. Multi-client concurrency test
-        print("  Running concurrent client test (10 clients)...")
+        # 17. Multi-client concurrency test
+        print("\n--- Concurrency Test (10 clients) ---")
         errors = []
 
         def worker(cid):
@@ -183,11 +230,41 @@ def main():
     finally:
         stop_server(server_proc)
 
-    print("=" * 60)
+    # 18. Section 5.4: Client Idle Timeout Test (Port 7896, idle_timeout=1s)
+    print("\n--- Testing Client Idle Timeout (idle_timeout = 1s on Port 7896) ---")
+    timeout_server = start_server(TIMEOUT_TEST_PORT, idle_timeout=1)
+    try:
+        # Client 1: Ngâm kết nối (không gửi dữ liệu) -> Server phải tự động đá sau ~1s
+        idle_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        idle_sock.connect((HOST, TIMEOUT_TEST_PORT))
+        print("  Connected idle client, waiting 1.3s without sending data...")
+        time.sleep(1.3)
+
+        # Thử đọc từ socket: server đã close, recv() phải trả về b"" (EOF)
+        idle_sock.settimeout(0.5)
+        data = idle_sock.recv(1024)
+        assert len(data) == 0, f"Expected EOF from idle client, got: {data!r}"
+        idle_sock.close()
+        print("  [OK] Idle client was disconnected by server after timeout")
+
+        # Client 2: Client hoạt động liên tục (gửi PING đều đặn) -> Không bị đá!
+        active_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        active_sock.connect((HOST, TIMEOUT_TEST_PORT))
+        for p in range(4):
+            time.sleep(0.3)
+            active_sock.sendall(encode_resp_cmd("PING"))
+            resp = recv_exact(active_sock, 7)
+            assert resp == b"+PONG\r\n", f"Active ping {p} failed: {resp!r}"
+        active_sock.close()
+        print("  [OK] Active client kept alive without being disconnected")
+
+    finally:
+        stop_server(timeout_server)
+
+    print("\n" + "=" * 60)
     print("  ALL E2E INTEGRATION TESTS PASSED SUCCESSFULLY!  ")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     main()
-

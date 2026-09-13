@@ -15,8 +15,9 @@ namespace mini_redis {
 
 // ─── Constructor ──────────────────────────────────────────────────────────────
 
-Listener::Listener(int port)
+Listener::Listener(int port, std::chrono::seconds idle_timeout)
     : port_(port),
+      idle_timeout_(idle_timeout),
       server_fd_(-1),
       address_{},
       running_(false)
@@ -46,9 +47,11 @@ Listener::~Listener() {
 void Listener::run() {
     Logger logger;
     running_.store(true);
-    logger.info("mini-redis listening on port {} (O_NONBLOCK + epoll)", port_);
+    logger.info("mini-redis listening on port {} (O_NONBLOCK + epoll, idle_timeout={}s)",
+                port_, idle_timeout_.count());
 
     EventLoop loop(server_fd_);
+    loop.set_client_idle_timeout(idle_timeout_);
     loop.run(running_);
 }
 

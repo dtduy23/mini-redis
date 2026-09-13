@@ -1,6 +1,9 @@
 #pragma once
 
+#include "event_loop.hpp"
+
 #include <atomic>
+#include <chrono>
 #include <netinet/in.h> // sockaddr_in
 
 namespace mini_redis {
@@ -19,7 +22,8 @@ public:
     static constexpr int DEFAULT_PORT = 6379;
     static constexpr int BACKLOG      = 128;
 
-    explicit Listener(int port = DEFAULT_PORT);
+    explicit Listener(int port = DEFAULT_PORT,
+                      std::chrono::seconds idle_timeout = EventLoop::DEFAULT_CLIENT_IDLE_TIMEOUT);
     ~Listener();
 
     Listener(const Listener&)            = delete;
@@ -32,10 +36,11 @@ public:
     void stop();
 
 private:
-    int               port_;
-    int               server_fd_;
-    sockaddr_in       address_;
-    std::atomic<bool> running_;
+    int                  port_;
+    std::chrono::seconds idle_timeout_;
+    int                  server_fd_;
+    sockaddr_in          address_;
+    std::atomic<bool>    running_;
 
     void create_socket();
     void bind_socket();

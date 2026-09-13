@@ -20,6 +20,9 @@ public:
     static void handle_incr(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_type(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_flushall(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_expire(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_ttl(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_persist(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
 };
 
 }  // namespace mini_redis

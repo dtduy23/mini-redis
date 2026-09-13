@@ -16,6 +16,9 @@ Dispatcher::Dispatcher() {
     register_command("INCR", 2, 2, Handlers::handle_incr);
     register_command("TYPE", 2, 2, Handlers::handle_type);
     register_command("FLUSHALL", 1, 1, Handlers::handle_flushall);
+    register_command("EXPIRE", 3, 3, Handlers::handle_expire);
+    register_command("TTL", 2, 2, Handlers::handle_ttl);
+    register_command("PERSIST", 2, 2, Handlers::handle_persist);
 }
 
 void Dispatcher::register_command(std::string name, int min_args, int max_args, CommandHandler handler) {
