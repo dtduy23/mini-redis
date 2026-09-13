@@ -227,10 +227,51 @@ def main():
         assert len(errors) == 0, f"Concurrency errors: {errors}"
         print("  [OK] Concurrency test (10 clients, 500 SET + 500 GET) passed")
 
+        # 17. COMMAND compatibility for redis-cli
+        s_cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s_cmd.connect((HOST, TEST_PORT))
+
+        def send_and_expect_cmd(cmd_args, expected_bytes, desc):
+            req = encode_resp_cmd(*cmd_args)
+            s_cmd.sendall(req)
+            resp = recv_exact(s_cmd, len(expected_bytes))
+            assert resp == expected_bytes, f"[{desc}] Expected {expected_bytes!r}, got {resp!r}"
+            print(f"  [OK] {desc}")
+
+        send_and_expect_cmd(["COMMAND"], b"*0\r\n", "COMMAND -> *0\\r\\n")
+        send_and_expect_cmd(["COMMAND", "DOCS"], b"*0\r\n", "COMMAND DOCS -> *0\\r\\n")
+        send_and_expect_cmd(["COMMAND", "COUNT"], b":15\r\n", "COMMAND COUNT -> :15\\r\\n")
+
+        # 18. SAVE and BGSAVE commands
+        send_and_expect_cmd(["SET", "persistent_key", "hello_rdb"], b"+OK\r\n", "SET persistent_key hello_rdb")
+        send_and_expect_cmd(["SAVE"], b"+OK\r\n", "SAVE -> +OK\\r\\n")
+        assert os.path.isfile("dump.rdb"), "dump.rdb exists on disk after SAVE"
+
+        send_and_expect_cmd(["BGSAVE"], b"+Background saving started\r\n", "BGSAVE -> +Background saving started\\r\\n")
+        time.sleep(0.3)  # Give child process time to finish and timerfd to harvest
+        s_cmd.close()
+
     finally:
         stop_server(server_proc)
 
-    # 18. Section 5.4: Client Idle Timeout Test (Port 7896, idle_timeout=1s)
+    # 18. RDB Persistence Verification on Server Restart
+    print("\n--- Testing RDB Snapshot Auto-Reload on Server Restart ---")
+    restart_server = start_server(7898)
+    try:
+        rs = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        rs.connect((HOST, 7898))
+        rs.sendall(encode_resp_cmd("GET", "persistent_key"))
+        expected_persisted = b"$9\r\nhello_rdb\r\n"
+        r_resp = recv_exact(rs, len(expected_persisted))
+        assert r_resp == expected_persisted, f"Expected persisted key from dump.rdb, got {r_resp!r}"
+        rs.close()
+        print("  [OK] Server restarted and successfully recovered 'persistent_key' from dump.rdb")
+    finally:
+        stop_server(restart_server)
+        if os.path.isfile("dump.rdb"):
+            os.remove("dump.rdb")
+
+    # 19. Section 5.4: Client Idle Timeout Test (Port 7896, idle_timeout=1s)
     print("\n--- Testing Client Idle Timeout (idle_timeout = 1s on Port 7896) ---")
     timeout_server = start_server(TIMEOUT_TEST_PORT, idle_timeout=1)
     try:

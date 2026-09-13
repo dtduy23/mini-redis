@@ -1,8 +1,10 @@
 #include "listener.hpp"
 #include "event_loop.hpp"
 #include "logging.hpp"
+#include "store/rdb.hpp"
 
 #include <arpa/inet.h>   // inet_ntop
+#include <filesystem>
 #include <netinet/in.h>  // sockaddr_in, htons, INADDR_ANY
 #include <sys/socket.h>  // socket, bind, listen, setsockopt
 #include <unistd.h>      // close, shutdown
@@ -66,6 +68,18 @@ void Listener::run() {
     EventLoop loop(server_fd_);
     loop.set_client_idle_timeout(config_.client_idle_timeout);
     loop.set_max_buffer_size(config_.max_buffer_size);
+
+    // Tự động khôi phục dữ liệu từ snapshot dump.rdb nếu có
+    if (std::filesystem::exists("dump.rdb")) {
+        size_t loaded = 0;
+        std::string err;
+        if (RdbManager::load("dump.rdb", loop.store(), loaded, err)) {
+            logger.info("DB loaded from disk: {} keys loaded from dump.rdb", loaded);
+        } else {
+            logger.warning("Failed to load dump.rdb: {}", err);
+        }
+    }
+
     loop.run(running_);
 }
 

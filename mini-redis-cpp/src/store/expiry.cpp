@@ -40,6 +40,19 @@ int64_t ExpiryManager::get_ttl_seconds(std::string_view key, bool key_exists, Ti
     return rem_sec > 0 ? rem_sec : 1;
 }
 
+uint64_t ExpiryManager::get_expire_epoch_ms(std::string_view key, TimePoint now, std::chrono::system_clock::time_point sys_now) const {
+    auto it = expires_.find(key);
+    if (it == expires_.end()) {
+        return 0;
+    }
+    if (now >= it->second) {
+        return 0;
+    }
+    auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(it->second - now);
+    auto sys_expire = sys_now + rem;
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(sys_expire.time_since_epoch()).count());
+}
+
 bool ExpiryManager::persist(std::string_view key) {
     auto it = expires_.find(key);
     if (it != expires_.end()) {

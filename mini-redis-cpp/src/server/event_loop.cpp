@@ -1,6 +1,7 @@
 #include "event_loop.hpp"
 #include "logging.hpp"
 #include "protocol/resp_serializer.hpp"
+#include "store/rdb.hpp"
 
 #include <arpa/inet.h>   // inet_ntop
 #include <fcntl.h>       // fcntl, O_NONBLOCK
@@ -9,6 +10,7 @@
 #include <sys/epoll.h>   // epoll_create1, epoll_ctl, epoll_wait
 #include <sys/socket.h>  // accept, recv, send, setsockopt
 #include <sys/timerfd.h> // timerfd_create, timerfd_settime
+#include <sys/wait.h>    // waitpid, WNOHANG
 #include <unistd.h>      // close
 
 #include <cerrno>
@@ -355,6 +357,21 @@ void EventLoop::on_timer_tick() {
 
     // 2. Quét chống ngâm kết nối (Client Idle Timeout)
     check_client_timeouts();
+
+    // 3. Thu hoạch tiến trình con chạy nền (BGSAVE) nếu có
+    if (RdbManager::is_bgsave_running()) {
+        int status = 0;
+        pid_t res = ::waitpid(RdbManager::bgsave_pid(), &status, WNOHANG);
+        if (res > 0) {
+            Logger logger;
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                logger.info("Background saving terminated with success");
+            } else {
+                logger.warning("Background saving failed or terminated abnormally (status={})", status);
+            }
+            RdbManager::reset_bgsave_pid();
+        }
+    }
 }
 
 void EventLoop::check_client_timeouts() {

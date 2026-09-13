@@ -59,6 +59,12 @@ public:
     // Direct deletion from store_ without triggering expiry logic (used by Active Expiry)
     bool del_raw(std::string_view key);
 
+    // Truy cập trực tiếp store (cho RDB serialization)
+    const auto& raw_store() const noexcept { return store_; }
+
+    // Khôi phục key-value từ RDB (kèm epoch timestamp)
+    void restore_key(std::string key, std::string value, uint64_t expire_epoch_ms);
+
     // Expiry manager accessors
     ExpiryManager& expiry() noexcept { return expiry_; }
     const ExpiryManager& expiry() const noexcept { return expiry_; }

@@ -1,9 +1,14 @@
 #include "handlers.hpp"
 #include "protocol/resp_serializer.hpp"
+#include "store/rdb.hpp"
 
+#include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <cstring>
 #include <span>
+#include <unistd.h>
 
 namespace mini_redis {
 
@@ -109,4 +114,52 @@ void Handlers::handle_persist(const std::vector<std::string>& cmd, DataStore& st
     out += RespSerializer::serialize_integer(removed ? 1 : 0);
 }
 
+void Handlers::handle_save(const std::vector<std::string>& /*cmd*/, DataStore& store, std::string& out) {
+    std::string err;
+    if (RdbManager::save("dump.rdb", store, err)) {
+        out += RespSerializer::serialize_ok();
+    } else {
+        out += RespSerializer::serialize_error("ERR " + err);
+    }
+}
+
+void Handlers::handle_bgsave(const std::vector<std::string>& /*cmd*/, DataStore& store, std::string& out) {
+    if (RdbManager::is_bgsave_running()) {
+        out += RespSerializer::serialize_error("ERR Background save already in progress");
+        return;
+    }
+
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        out += RespSerializer::serialize_error("ERR fork failed: " + std::string(std::strerror(errno)));
+        return;
+    }
+
+    if (pid == 0) {
+        // Child process
+        std::string err;
+        bool ok = RdbManager::save("dump.rdb", store, err);
+        ::_exit(ok ? 0 : 1);
+    }
+
+    // Parent process
+    RdbManager::set_bgsave_pid(pid);
+    out += RespSerializer::serialize_simple_string("Background saving started");
+}
+
+void Handlers::handle_command(const std::vector<std::string>& cmd, DataStore& /*store*/, std::string& out) {
+    if (cmd.size() > 1) {
+        std::string sub = cmd[1];
+        for (char& c : sub) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (sub == "COUNT") {
+            out += RespSerializer::serialize_integer(15);
+            return;
+        }
+    }
+    out += RespSerializer::serialize_empty_array();
+}
+
 }  // namespace mini_redis
+

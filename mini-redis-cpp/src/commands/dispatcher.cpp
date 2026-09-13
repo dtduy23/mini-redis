@@ -19,6 +19,9 @@ Dispatcher::Dispatcher() {
     register_command("EXPIRE", 3, 3, Handlers::handle_expire);
     register_command("TTL", 2, 2, Handlers::handle_ttl);
     register_command("PERSIST", 2, 2, Handlers::handle_persist);
+    register_command("SAVE", 1, 1, Handlers::handle_save);
+    register_command("BGSAVE", 1, 1, Handlers::handle_bgsave);
+    register_command("COMMAND", 1, -1, Handlers::handle_command);
 }
 
 void Dispatcher::register_command(std::string name, int min_args, int max_args, CommandHandler handler) {

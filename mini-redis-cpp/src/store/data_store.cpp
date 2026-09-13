@@ -152,4 +152,22 @@ size_t DataStore::dbsize() const {
     return store_.size();
 }
 
+void DataStore::restore_key(std::string key, std::string value, uint64_t expire_epoch_ms) {
+    if (expire_epoch_ms > 0) {
+        auto now_epoch_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+            ).count()
+        );
+        if (expire_epoch_ms <= now_epoch_ms) {
+            return; // Đã hết hạn trong thời gian tắt server, bỏ qua
+        }
+        uint64_t rem_ms = expire_epoch_ms - now_epoch_ms;
+        expiry_.set_expiry(key, std::chrono::milliseconds(rem_ms));
+    } else {
+        expiry_.remove(key);
+    }
+    store_.insert_or_assign(std::move(key), std::move(value));
+}
+
 }  // namespace mini_redis

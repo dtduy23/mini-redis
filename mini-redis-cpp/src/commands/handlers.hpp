@@ -23,6 +23,9 @@ public:
     static void handle_expire(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_ttl(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_persist(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_save(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_bgsave(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_command(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
 };
 
 }  // namespace mini_redis

@@ -29,6 +29,11 @@ public:
     // - Trả về số giây còn lại (>= 0) nếu có TTL
     int64_t get_ttl_seconds(std::string_view key, bool key_exists, TimePoint now = std::chrono::steady_clock::now()) const;
 
+    // Lấy thời điểm hết hạn tính bằng epoch ms (Unix timestamp). Trả về 0 nếu không có TTL hoặc đã hết hạn
+    uint64_t get_expire_epoch_ms(std::string_view key,
+                                 TimePoint now = std::chrono::steady_clock::now(),
+                                 std::chrono::system_clock::time_point sys_now = std::chrono::system_clock::now()) const;
+
     // Xóa TTL của key (lệnh PERSIST): trả về true nếu xóa thành công, false nếu key không có TTL
     bool persist(std::string_view key);
 
