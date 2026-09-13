@@ -1,5 +1,6 @@
 #include "event_loop.hpp"
 #include "logging.hpp"
+#include "protocol/resp_serializer.hpp"
 
 #include <arpa/inet.h>   // inet_ntop
 #include <fcntl.h>       // fcntl, O_NONBLOCK
@@ -194,13 +195,36 @@ void EventLoop::on_client_data(int client_fd) {
         }
     }
 
-    // TODO: Kiểm tra read_buf có đủ 1 lệnh RESP chưa?
-    //       Nếu đủ → parse + dispatch + đẩy response vào write_buf
-    //       Hiện tại: echo lại toàn bộ
-    conn.write_buf() += conn.read_buf();
-    conn.read_buf().clear();
+    // Parse và dispatch các lệnh RESP
+    while (true) {
+        std::string_view unparsed = conn.unparsed_view();
+        if (unparsed.empty()) {
+            break;
+        }
 
-    // Flush write_buf sau khi đọc xong
+        size_t bytes_consumed = 0;
+        std::vector<std::string> cmd;
+        std::string err;
+
+        ParseResult res = conn.parser().parse(unparsed, bytes_consumed, cmd, err);
+        conn.consume(bytes_consumed);
+
+        if (res == ParseResult::Ok) {
+            dispatcher_.dispatch(cmd, store_, conn.write_buf());
+        } else if (res == ParseResult::Incomplete) {
+            break;
+        } else {  // ParseResult::Error
+            logger.warning("Protocol error from fd={}: {}", client_fd, err);
+            conn.write_buf() += RespSerializer::serialize_error(err);
+            try_flush(client_fd);
+            close_client(client_fd);
+            return;
+        }
+    }
+
+    conn.maybe_compact();
+
+    // Flush write_buf sau khi xử lý xong
     try_flush(client_fd);
 }
 

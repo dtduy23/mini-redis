@@ -1,6 +1,8 @@
 #pragma once
 
 #include "connection.hpp"
+#include "commands/dispatcher.hpp"
+#include "store/data_store.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -36,12 +38,19 @@ public:
     // Bắt đầu vòng lặp — block cho đến khi running = false
     void run(std::atomic<bool>& running);
 
+    // Truy cập DataStore (hữu ích cho testing và kiểm tra trạng thái)
+    DataStore& store() noexcept { return store_; }
+    const DataStore& store() const noexcept { return store_; }
+
 private:
     int epoll_fd_;
     int server_fd_;
 
     // Lưu tất cả client đang kết nối, key = file descriptor
     std::unordered_map<int, Connection> connections_;
+
+    DataStore store_;
+    Dispatcher dispatcher_;
 
     // Thêm fd vào epoll để theo dõi
     void epoll_add(int fd);
