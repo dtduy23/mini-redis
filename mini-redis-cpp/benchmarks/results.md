@@ -83,6 +83,26 @@ This document presents benchmark results for **mini-redis-cpp**, an event-driven
 
 ---
 
+## Head-to-Head Comparison: mini-redis-cpp vs Official Redis 7.4.9
+
+Both servers were tested under identical conditions using the **official `redis-benchmark`** tool (`50 concurrent clients`, `100,000 requests`, `-q` quiet mode):
+
+```bash
+# Command used:
+redis-benchmark -p <port> -t ping_mbulk,set,get,incr -n 100000 -c 50 -q
+```
+
+### Throughput & Latency Comparison
+
+| Command | mini-redis-cpp (RPS) | Redis v7.4.9 (RPS) | mini-redis-cpp p50 | Redis v7.4.9 p50 | Relative Speed |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| **PING (mbulk)** | **69,686.41** | 62,695.92 | **0.359 ms** | 0.431 ms | **+11.1% faster** |
+| **SET**          | **66,006.60** | 65,316.79 | **0.399 ms** | 0.431 ms | **+1.1% faster**  |
+| **GET**          | **70,621.47** | 64,808.82 | **0.367 ms** | 0.431 ms | **+9.0% faster**  |
+| **INCR**         | **67,980.97** | 64,143.68 | **0.391 ms** | 0.431 ms | **+6.0% faster**  |
+
+---
+
 ## Architectural Key Takeaways
 
 1. **Sub-millisecond Latency**: 99% of all requests complete under **1.0 ms** across all command types.

@@ -77,7 +77,18 @@ Benchmarked on Linux x86_64 using native concurrent client load generator (`mini
 | **GET**  | 100,000 | 0.968 s | **103,354.44** | 0.017 ms | 0.470 ms | 0.460 ms | **0.927 ms** |
 | **INCR** | 100,000 | 0.936 s | **106,886.39** | 0.019 ms | 0.456 ms | 0.438 ms | **0.897 ms** |
 
-> **Result**: Stable **>100,000 RPS** with sub-millisecond p99 latency across all core key-value operations. Detailed percentile reports are documented in [benchmarks/results.md](benchmarks/results.md).
+> **Result**: Stable **>100,000 RPS** with sub-millisecond p99 latency across all core key-value operations. Detailed percentile reports are documented in [mini-redis-cpp/benchmarks/results.md](mini-redis-cpp/benchmarks/results.md).
+
+### Head-to-Head Comparison: mini-redis-cpp vs Official Redis 7.4.9
+
+Benchmarked under identical conditions using the **official `redis-benchmark`** tool (`50 concurrent clients`, `100,000 requests`, `-q` quiet mode):
+
+| Command | `mini-redis-cpp` (RPS) | `Redis v7.4.9` (RPS) | `mini-redis-cpp` p50 | `Redis v7.4.9` p50 | Relative Speed |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| **PING (mbulk)** | **69,686.41** | 62,695.92 | **0.359 ms** | 0.431 ms | **+11.1% faster** |
+| **SET**          | **66,006.60** | 65,316.79 | **0.399 ms** | 0.431 ms | **+1.1% faster**  |
+| **GET**          | **70,621.47** | 64,808.82 | **0.367 ms** | 0.431 ms | **+9.0% faster**  |
+| **INCR**         | **67,980.97** | 64,143.68 | **0.391 ms** | 0.431 ms | **+6.0% faster**  |
 
 ---
 
@@ -161,39 +172,45 @@ Validates real socket communication, protocol serialization, pipeline execution,
 ## Project Structure
 
 ```text
-mini-redis-cpp/
-├── benchmarks/
-│   └── results.md             # Benchmark numbers, percentiles, analysis
-├── docs/
-│   └── requirements.md        # Detailed requirements specification
-├── src/
-│   ├── benchmark/
-│   │   └── benchmark.cpp      # Native high-performance benchmark tool
-│   ├── commands/
-│   │   ├── dispatcher.hpp/.cpp# Command routing and arity validation
-│   │   └── handlers.hpp/.cpp  # Command logic (SET, GET, TTL, SAVE, etc.)
-│   ├── config/
-│   │   └── config.hpp/.cpp    # Configuration loader & self-healing engine
-│   ├── protocol/
-│   │   ├── resp_parser.hpp/.cpp    # RESP2 streaming state machine
-│   │   └── resp_serializer.hpp/.cpp# RESP2 protocol serializer
-│   ├── server/
-│   │   ├── connection.hpp/.cpp# Per-client buffers and parser state
-│   │   ├── event_loop.hpp/.cpp# epoll event loop & timerfd handler
-│   │   ├── listener.hpp/.cpp  # TCP socket binding & listen
-│   │   └── logging.hpp        # Fast zero-dependency structured logger
-│   ├── store/
-│   │   ├── data_store.hpp/.cpp# In-memory key-value hash table
-│   │   ├── expiry.hpp/.cpp    # Active & lazy TTL eviction manager
-│   │   └── rdb.hpp/.cpp       # RDB snapshot serialization & COW engine
-│   └── main.cpp               # CLI parsing, signal handling, entry point
-└── tests/
-    ├── test_resp_parser.cpp   # Unit tests: protocol streaming & edge cases
-    ├── test_data_store.cpp    # Unit tests: KV store & command dispatch
-    ├── test_expiry.cpp        # Unit tests: TTL active & lazy eviction
-    ├── test_config.cpp        # Unit tests: self-healing configuration
-    ├── test_rdb.cpp           # Unit tests: snapshot, checksum, bgsave
-    └── test_server_e2e.py     # Python E2E socket integration tests
+mini-redis/
+├── README.md                      # Project documentation and architecture guide
+├── redis-clone-requirements.md    # Functional & non-functional requirements
+└── mini-redis-cpp/                # Core C++20 implementation
+    ├── CMakeLists.txt             # Root CMake build file
+    ├── mini-redis.conf            # Self-healing configuration file
+    ├── benchmarks/
+    │   └── results.md             # Benchmark numbers, percentiles, analysis
+    ├── docs/
+    │   └── requirements.md        # Detailed requirements specification
+    ├── src/
+    │   ├── benchmark/
+    │   │   └── benchmark.cpp      # Native high-performance benchmark tool
+    │   ├── commands/
+    │   │   ├── dispatcher.hpp/.cpp# Command routing and arity validation
+    │   │   └── handlers.hpp/.cpp  # Command logic (SET, GET, TTL, SAVE, etc.)
+    │   ├── config/
+    │   │   └── config.hpp/.cpp    # Configuration loader & self-healing engine
+    │   ├── protocol/
+    │   │   ├── resp_parser.hpp/.cpp    # RESP2 streaming state machine
+    │   │   └── resp_serializer.hpp/.cpp# RESP2 protocol serializer
+    │   ├── server/
+    │   │   ├── connection.hpp/.cpp# Per-client buffers and parser state
+    │   │   ├── event_loop.hpp/.cpp# epoll event loop & timerfd handler
+    │   │   ├── listener.hpp/.cpp  # TCP socket binding & listen
+    │   │   └── logging.hpp        # Fast zero-dependency structured logger
+    │   ├── store/
+    │   │   ├── data_store.hpp/.cpp# In-memory key-value hash table
+    │   │   ├── expiry.hpp/.cpp    # Active & lazy TTL eviction manager
+    │   │   └── rdb.hpp/.cpp       # RDB snapshot serialization & COW engine
+    │   └── main.cpp               # CLI parsing, signal handling, entry point
+    └── tests/
+        ├── CMakeLists.txt         # Unit test targets
+        ├── test_resp_parser.cpp   # Unit tests: protocol streaming & edge cases
+        ├── test_data_store.cpp    # Unit tests: KV store & command dispatch
+        ├── test_expiry.cpp        # Unit tests: TTL active & lazy eviction
+        ├── test_config.cpp        # Unit tests: self-healing configuration
+        ├── test_rdb.cpp           # Unit tests: snapshot, checksum, bgsave
+        └── test_server_e2e.py     # Python E2E socket integration tests
 ```
 
 ---
