@@ -11,6 +11,7 @@ add_library(mini_redis_lib STATIC
     store/expiry.cpp
     commands/dispatcher.cpp
     commands/handlers.cpp
+    config/config.cpp
 )
 
 target_link_libraries(mini_redis_lib PUBLIC Threads::Threads)

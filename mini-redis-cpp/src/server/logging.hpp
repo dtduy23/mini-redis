@@ -12,6 +12,20 @@ class Logger {
 public:
     enum LogLevel { DEBUG, INFO, WARNING, ERROR };
 
+    inline static LogLevel s_global_level{DEBUG};
+
+    static void set_global_level(LogLevel level) noexcept {
+        s_global_level = level;
+    }
+
+    static LogLevel parse_level(std::string_view level_str) noexcept {
+        if (level_str == "debug" || level_str == "DEBUG") return DEBUG;
+        if (level_str == "info" || level_str == "INFO") return INFO;
+        if (level_str == "warning" || level_str == "WARNING" || level_str == "warn") return WARNING;
+        if (level_str == "error" || level_str == "ERROR") return ERROR;
+        return INFO;
+    }
+
     Logger() = default;
 
     template <typename... Args>
@@ -77,6 +91,10 @@ private:
 
     template <typename... Args>
     void log(LogLevel level, std::string_view fmt, Args&&... args) {
+        if (level < s_global_level) {
+            return;
+        }
+
         std::string message = std::vformat(fmt, std::make_format_args(args...));
 
         std::cout << GRAY    << current_time() << RESET << " "

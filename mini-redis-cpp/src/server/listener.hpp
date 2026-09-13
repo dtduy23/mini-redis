@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/config.hpp"
 #include "event_loop.hpp"
 
 #include <atomic>
@@ -22,6 +23,7 @@ public:
     static constexpr int DEFAULT_PORT = 6379;
     static constexpr int BACKLOG      = 128;
 
+    explicit Listener(const ServerConfig& config);
     explicit Listener(int port = DEFAULT_PORT,
                       std::chrono::seconds idle_timeout = EventLoop::DEFAULT_CLIENT_IDLE_TIMEOUT);
     ~Listener();
@@ -35,9 +37,10 @@ public:
     // Dừng server (thread-safe)
     void stop();
 
+    const ServerConfig& config() const noexcept { return config_; }
+
 private:
-    int                  port_;
-    std::chrono::seconds idle_timeout_;
+    ServerConfig         config_;
     int                  server_fd_;
     sockaddr_in          address_;
     std::atomic<bool>    running_;

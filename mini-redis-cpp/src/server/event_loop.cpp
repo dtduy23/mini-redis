@@ -202,9 +202,9 @@ void EventLoop::on_client_data(int client_fd) {
 
         if (n > 0) {
             // Kiểm tra giới hạn buffer để phòng chống DoS tràn RAM
-            if (conn.read_buf().size() + static_cast<size_t>(n) > MAX_BUFFER_SIZE) {
-                logger.warning("Client fd={} exceeded MAX_BUFFER_SIZE ({} bytes), disconnecting",
-                               client_fd, MAX_BUFFER_SIZE);
+            if (conn.read_buf().size() + static_cast<size_t>(n) > max_buffer_size_) {
+                logger.warning("Client fd={} exceeded max_buffer_size ({} bytes), disconnecting",
+                               client_fd, max_buffer_size_);
                 close_client(client_fd);
                 return;
             }

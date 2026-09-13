@@ -1,10 +1,15 @@
+#include "config/config.hpp"
 #include "server/listener.hpp"
 #include "server/logging.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <csignal>    // signal, SIGINT, SIGTERM
 #include <cstdlib>    // atoi
+#include <cstring>
 #include <iostream>   // cerr
 #include <stdexcept>  // exception
+#include <string>
 
 // ─── Signal handling ──────────────────────────────────────────────────────────
 //
@@ -33,25 +38,61 @@ static void on_shutdown_signal(int sig) {
 int main(int argc, char* argv[]) {
     Logger log;
 
-    // Đọc port từ argument dòng lệnh, ví dụ: ./mini_redis_cpp 7000
-    // Nếu không truyền thì dùng port mặc định 6379 (port chuẩn của Redis)
-    int port = mini_redis::Listener::DEFAULT_PORT;
+    std::string config_path = "mini-redis.conf";
+    int override_port = -1;
+    int override_timeout = -1;
+
     if (argc >= 2) {
-        port = std::atoi(argv[1]);
-        if (port <= 0 || port > 65535) {
-            log.error("Invalid port: {} (must be 1-65535)", argv[1]);
-            return 1;
+        std::string_view arg1 = argv[1];
+        bool is_num = !arg1.empty() && std::all_of(arg1.begin(), arg1.end(), [](unsigned char c) { return std::isdigit(c); });
+        if (is_num) {
+            // Trường hợp tương thích ngược: ./mini_redis_cpp <port> [timeout]
+            override_port = std::atoi(argv[1]);
+            if (argc >= 3) {
+                std::string_view arg2 = argv[2];
+                if (std::all_of(arg2.begin(), arg2.end(), [](unsigned char c) { return std::isdigit(c); })) {
+                    override_timeout = std::atoi(argv[2]);
+                }
+            }
+        } else if (arg1 == "--config" && argc >= 3) {
+            config_path = argv[2];
+        } else {
+            config_path = argv[1];
         }
     }
 
-    std::chrono::seconds idle_timeout = mini_redis::EventLoop::DEFAULT_CLIENT_IDLE_TIMEOUT;
-    if (argc >= 3) {
-        idle_timeout = std::chrono::seconds(std::atoi(argv[2]));
+    // Nạp cấu hình từ file với cơ chế tự phục hồi (Self-Healing)
+    mini_redis::ConfigStatus status;
+    std::string config_msg;
+    mini_redis::ServerConfig config = mini_redis::ConfigManager::load_and_manage(config_path, status, config_msg);
+
+    // Ghi log trạng thái nạp cấu hình
+    if (status == mini_redis::ConfigStatus::CreatedDefault) {
+        log.info("{}", config_msg);
+    } else if (status == mini_redis::ConfigStatus::RepairedMissing) {
+        log.warning("{}", config_msg);
+    } else if (status == mini_redis::ConfigStatus::RecoveredFromCorrupted) {
+        log.warning("{}", config_msg);
+    } else {
+        log.info("{}", config_msg);
     }
+
+    // Áp dụng override từ CLI (nếu có)
+    if (override_port > 0 && override_port <= 65535) {
+        config.port = override_port;
+        log.info("CLI override: port = {}", config.port);
+    }
+    if (override_timeout >= 0) {
+        config.client_idle_timeout = std::chrono::seconds(override_timeout);
+        log.info("CLI override: client_idle_timeout = {}s", override_timeout);
+    }
+
+    // Áp dụng mức lọc loglevel toàn cục
+    Logger::set_global_level(Logger::parse_level(config.loglevel));
 
     // Khởi tạo server — throw nếu không bind được port
     try {
-        mini_redis::Listener listener(port, idle_timeout);
+        mini_redis::Listener listener(config);
 
         // Đăng ký signal handler sau khi listener sẵn sàng
         g_listener = &listener;

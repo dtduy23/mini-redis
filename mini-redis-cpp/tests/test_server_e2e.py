@@ -261,6 +261,48 @@ def main():
     finally:
         stop_server(timeout_server)
 
+    # 19. Configuration File System E2E Test
+    print("\n--- Testing Configuration File System (Auto-generation & Custom Config) ---")
+    conf_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "e2e_conf_tmp"))
+    os.makedirs(conf_dir, exist_ok=True)
+    auto_conf_path = os.path.join(conf_dir, "auto_gen.conf")
+    if os.path.exists(auto_conf_path):
+        os.remove(auto_conf_path)
+
+    # Khởi động server với file config chưa tồn tại -> Server phải tự động sinh file
+    print("  Testing first-run auto-generation of configuration file...")
+    proc_auto = subprocess.Popen([SERVER_BIN, auto_conf_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(0.3)
+    assert os.path.isfile(auto_conf_path), "Configuration file was auto-generated on first run"
+    with open(auto_conf_path, "r") as f:
+        conf_text = f.read()
+    assert "port 6379" in conf_text, "Auto-generated config contains default port"
+    assert "timeout 300" in conf_text, "Auto-generated config contains default timeout"
+    stop_server(proc_auto)
+    print("  [OK] First-run configuration file automatically created with complete directives")
+
+    # Khởi động server với file config tùy biến cổng 7897
+    custom_conf_path = os.path.join(conf_dir, "custom_e2e.conf")
+    with open(custom_conf_path, "w") as f:
+        f.write("bind 127.0.0.1\nport 7897\ntimeout 60\nloglevel debug\n")
+
+    print("  Testing server startup with custom configuration file (Port 7897)...")
+    proc_custom = subprocess.Popen([SERVER_BIN, custom_conf_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(0.3)
+    s_conf = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s_conf.connect((HOST, 7897))
+    s_conf.sendall(encode_resp_cmd("PING", "from_config"))
+    conf_resp = recv_exact(s_conf, 18)
+    assert conf_resp == b"$11\r\nfrom_config\r\n", f"Unexpected response from custom port: {conf_resp!r}"
+    s_conf.close()
+    stop_server(proc_custom)
+    print("  [OK] Server loaded custom configuration successfully (Port 7897 responded)")
+
+    # Dọn dẹp thư mục tạm
+    for f in os.listdir(conf_dir):
+        os.remove(os.path.join(conf_dir, f))
+    os.rmdir(conf_dir)
+
     print("\n" + "=" * 60)
     print("  ALL E2E INTEGRATION TESTS PASSED SUCCESSFULLY!  ")
     print("=" * 60)

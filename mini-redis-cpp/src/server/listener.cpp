@@ -15,15 +15,28 @@ namespace mini_redis {
 
 // ─── Constructor ──────────────────────────────────────────────────────────────
 
-Listener::Listener(int port, std::chrono::seconds idle_timeout)
-    : port_(port),
-      idle_timeout_(idle_timeout),
+Listener::Listener(const ServerConfig& config)
+    : config_(config),
       server_fd_(-1),
       address_{},
       running_(false)
 {
     Logger logger;
-    logger.debug("Initializing server on port {}", port_);
+    logger.debug("Initializing server on {}:{}", config_.bind_address, config_.port);
+    create_socket();
+    bind_socket();
+    start_listen();
+}
+
+Listener::Listener(int port, std::chrono::seconds idle_timeout)
+    : server_fd_(-1),
+      address_{},
+      running_(false)
+{
+    config_.port = port;
+    config_.client_idle_timeout = idle_timeout;
+    Logger logger;
+    logger.debug("Initializing server on port {}", config_.port);
     create_socket();
     bind_socket();
     start_listen();
@@ -47,11 +60,12 @@ Listener::~Listener() {
 void Listener::run() {
     Logger logger;
     running_.store(true);
-    logger.info("mini-redis listening on port {} (O_NONBLOCK + epoll, idle_timeout={}s)",
-                port_, idle_timeout_.count());
+    logger.info("mini-redis listening on {}:{} (O_NONBLOCK + epoll, idle_timeout={}s)",
+                config_.bind_address, config_.port, config_.client_idle_timeout.count());
 
     EventLoop loop(server_fd_);
-    loop.set_client_idle_timeout(idle_timeout_);
+    loop.set_client_idle_timeout(config_.client_idle_timeout);
+    loop.set_max_buffer_size(config_.max_buffer_size);
     loop.run(running_);
 }
 
@@ -92,8 +106,16 @@ void Listener::bind_socket() {
     Logger logger;
 
     address_.sin_family      = AF_INET;
-    address_.sin_addr.s_addr = INADDR_ANY;
-    address_.sin_port        = ::htons(port_);
+    address_.sin_port        = ::htons(config_.port);
+
+    if (config_.bind_address.empty() || config_.bind_address == "0.0.0.0") {
+        address_.sin_addr.s_addr = INADDR_ANY;
+    } else {
+        if (::inet_pton(AF_INET, config_.bind_address.c_str(), &address_.sin_addr) <= 0) {
+            logger.warning("Invalid bind address '{}', defaulting to INADDR_ANY", config_.bind_address);
+            address_.sin_addr.s_addr = INADDR_ANY;
+        }
+    }
 
     if (::bind(server_fd_,
                reinterpret_cast<const sockaddr*>(&address_),
@@ -102,7 +124,7 @@ void Listener::bind_socket() {
             std::string("bind() failed: ") + std::strerror(errno));
     }
 
-    logger.debug("bound to 0.0.0.0:{}", port_);
+    logger.debug("bound to {}:{}", config_.bind_address, config_.port);
 }
 
 // ─── start_listen() ───────────────────────────────────────────────────────────

@@ -51,6 +51,10 @@ public:
     void set_client_idle_timeout(std::chrono::seconds timeout) noexcept { client_idle_timeout_ = timeout; }
     std::chrono::seconds client_idle_timeout() const noexcept { return client_idle_timeout_; }
 
+    // Cấu hình giới hạn buffer chống DoS
+    void set_max_buffer_size(size_t sz) noexcept { max_buffer_size_ = sz; }
+    size_t max_buffer_size() const noexcept { return max_buffer_size_; }
+
     // Số lượng client đang kết nối
     size_t client_count() const noexcept { return connections_.size(); }
 
@@ -63,6 +67,7 @@ private:
     int server_fd_;
     int timer_fd_{-1};
     std::chrono::seconds client_idle_timeout_{DEFAULT_CLIENT_IDLE_TIMEOUT};
+    size_t max_buffer_size_{MAX_BUFFER_SIZE};
 
     // Lưu tất cả client đang kết nối, key = file descriptor
     std::unordered_map<int, Connection> connections_;
