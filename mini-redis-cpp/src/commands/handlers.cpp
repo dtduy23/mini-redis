@@ -44,6 +44,12 @@ void Handlers::handle_del(const std::vector<std::string>& cmd, DataStore& store,
     out += RespSerializer::serialize_integer(count);
 }
 
+void Handlers::handle_unlink(const std::vector<std::string>& cmd, DataStore& store, std::string& out) {
+    std::span<const std::string> keys(cmd.data() + 1, cmd.size() - 1);
+    int64_t count = store.unlink(keys);
+    out += RespSerializer::serialize_integer(count);
+}
+
 void Handlers::handle_exists(const std::vector<std::string>& cmd, DataStore& store, std::string& out) {
     std::span<const std::string> keys(cmd.data() + 1, cmd.size() - 1);
     int64_t count = store.exists(keys);
@@ -154,7 +160,7 @@ void Handlers::handle_command(const std::vector<std::string>& cmd, DataStore& /*
             c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         }
         if (sub == "COUNT") {
-            out += RespSerializer::serialize_integer(15);
+            out += RespSerializer::serialize_integer(16);
             return;
         }
     }

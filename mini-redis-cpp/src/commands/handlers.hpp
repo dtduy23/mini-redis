@@ -16,6 +16,7 @@ public:
     static void handle_set(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_get(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_del(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
+    static void handle_unlink(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_exists(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_incr(const std::vector<std::string>& cmd, DataStore& store, std::string& out);
     static void handle_type(const std::vector<std::string>& cmd, DataStore& store, std::string& out);

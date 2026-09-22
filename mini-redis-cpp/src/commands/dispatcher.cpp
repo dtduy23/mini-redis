@@ -12,6 +12,7 @@ Dispatcher::Dispatcher() {
     register_command("SET", 3, 3, Handlers::handle_set);
     register_command("GET", 2, 2, Handlers::handle_get);
     register_command("DEL", 2, -1, Handlers::handle_del);
+    register_command("UNLINK", 2, -1, Handlers::handle_unlink);
     register_command("EXISTS", 2, -1, Handlers::handle_exists);
     register_command("INCR", 2, 2, Handlers::handle_incr);
     register_command("TYPE", 2, 2, Handlers::handle_type);

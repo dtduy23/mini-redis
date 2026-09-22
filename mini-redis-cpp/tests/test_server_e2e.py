@@ -240,9 +240,16 @@ def main():
 
         send_and_expect_cmd(["COMMAND"], b"*0\r\n", "COMMAND -> *0\\r\\n")
         send_and_expect_cmd(["COMMAND", "DOCS"], b"*0\r\n", "COMMAND DOCS -> *0\\r\\n")
-        send_and_expect_cmd(["COMMAND", "COUNT"], b":15\r\n", "COMMAND COUNT -> :15\\r\\n")
+        send_and_expect_cmd(["COMMAND", "COUNT"], b":16\r\n", "COMMAND COUNT -> :16\\r\\n")
 
-        # 18. SAVE and BGSAVE commands
+        # 18. UNLINK command (Lazy Free via BIO ThreadPool)
+        send_and_expect_cmd(["SET", "unlink_k1", "val1"], b"+OK\r\n", "SET unlink_k1")
+        send_and_expect_cmd(["SET", "unlink_k2", "val2"], b"+OK\r\n", "SET unlink_k2")
+        send_and_expect_cmd(["UNLINK", "unlink_k1", "unlink_k2", "nonexistent"], b":2\r\n", "UNLINK unlink_k1 unlink_k2 nonexistent -> :2\\r\\n")
+        send_and_expect_cmd(["GET", "unlink_k1"], b"$-1\r\n", "GET unlink_k1 -> nil")
+        send_and_expect_cmd(["GET", "unlink_k2"], b"$-1\r\n", "GET unlink_k2 -> nil")
+
+        # 19. SAVE and BGSAVE commands
         send_and_expect_cmd(["SET", "persistent_key", "hello_rdb"], b"+OK\r\n", "SET persistent_key hello_rdb")
         send_and_expect_cmd(["SAVE"], b"+OK\r\n", "SAVE -> +OK\\r\\n")
         assert os.path.isfile("dump.rdb"), "dump.rdb exists on disk after SAVE"

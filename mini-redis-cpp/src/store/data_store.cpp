@@ -1,7 +1,9 @@
 #include "data_store.hpp"
+#include "server/bio.hpp"
 
 #include <charconv>
 #include <limits>
+#include <memory>
 #include <utility>
 
 namespace mini_redis {
@@ -55,6 +57,38 @@ int64_t DataStore::del(std::span<const std::string> keys) {
     int64_t count = 0;
     for (const auto& key : keys) {
         if (del(key)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+bool DataStore::unlink(std::string_view key) {
+    bool expired = expiry_.is_expired(key);
+    expiry_.remove(key);
+    if (expired) {
+        del_raw(key);
+        return false;
+    }
+    auto it = store_.find(key);
+    if (it == store_.end()) {
+        return false;
+    }
+    auto node = store_.extract(it);
+    if (!node.empty()) {
+        auto pnode = std::make_shared<decltype(node)>(std::move(node));
+        BioManager::instance().submit(BioType::LazyFree, [pnode]() {
+            // Bộ nhớ chuỗi và bucket băm được giải phóng ngầm tại BIO thread
+        });
+        return true;
+    }
+    return false;
+}
+
+int64_t DataStore::unlink(std::span<const std::string> keys) {
+    int64_t count = 0;
+    for (const auto& key : keys) {
+        if (unlink(key)) {
             count++;
         }
     }

@@ -35,6 +35,12 @@ public:
     // Delete one or more keys. Returns number of keys removed.
     int64_t del(std::span<const std::string> keys);
 
+    // Asynchronously unlink a single key (moves deallocation to BIO LazyFree worker thread)
+    bool unlink(std::string_view key);
+
+    // Asynchronously unlink one or more keys
+    int64_t unlink(std::span<const std::string> keys);
+
     // Check if a single key exists. Triggers lazy expiry if expired.
     bool exists(std::string_view key);
     bool exists(std::string_view key) const;

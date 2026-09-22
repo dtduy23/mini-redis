@@ -13,6 +13,7 @@ add_library(mini_redis_lib STATIC
     commands/handlers.cpp
     config/config.cpp
     store/rdb.cpp
+    server/bio.cpp
 )
 
 target_link_libraries(mini_redis_lib PUBLIC Threads::Threads)

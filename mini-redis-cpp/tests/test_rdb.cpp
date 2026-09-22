@@ -221,7 +221,7 @@ bool test_rdb_dispatcher_commands() {
     // COMMAND COUNT
     out.clear();
     dispatcher.dispatch({"COMMAND", "COUNT"}, store, out);
-    TEST_ASSERT(out == ":15\r\n", "COMMAND COUNT returns integer count 15");
+    TEST_ASSERT(out == ":16\r\n", "COMMAND COUNT returns integer count 16");
 
     return true;
 }

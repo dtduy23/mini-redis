@@ -13,6 +13,9 @@ Designed to demonstrate systems-level software engineering: low-level socket pro
 - **Dual Expiry Engine (TTL)**:
   - **Lazy Eviction**: Expired keys are checked and purged on access in $\mathcal{O}(1)$ time.
   - **Active Expiry Sweep**: Periodic probabilistic sampling (Redis algorithm) driven by POSIX `timerfd` at 10Hz without blocking request processing.
+- **Background I/O (BIO) Subsystem & Lazy Free (`UNLINK`)**:
+  - Redis 4.0-inspired asynchronous worker thread pool (`std::jthread`, `std::condition_variable`).
+  - `UNLINK` command extracts hash table nodes in $\mathcal{O}(1)$ (`store_.extract(it)`) on the main thread and delegates complex memory deallocation to a dedicated background worker (`BioType::LazyFree`), ensuring zero event loop stalling.
 - **RDB Snapshot Persistence & Linux COW**:
   - `SAVE`: Synchronous snapshot generation to atomic temporary files.
   - `BGSAVE`: Asynchronous snapshot using Linux `fork()` Copy-On-Write (COW) semantics; parent server reaps child processes non-blockingly via `waitpid(WNOHANG)`.
@@ -54,6 +57,11 @@ flowchart TD
         Handlers <--> DataStore[DataStore Hash Table]
         TimerFD -->|10Hz Active Sweep| Expiry[TTL Expiry Manager]
         Expiry <--> DataStore
+    end
+
+    subgraph BIO ["Background I/O (BIO) Engine"]
+        DataStore -->|UNLINK extract node O(1)| BioMgr[BioManager Workers]
+        BioMgr -->|Async Lazy Free| BackgroundThreads[std::jthread Pool]
     end
 
     subgraph Persistence ["Persistence Layer"]
@@ -99,7 +107,7 @@ Full interoperability with official `redis-cli` and third-party Redis drivers:
 | Category | Commands | Description |
 |:---|:---|:---|
 | **System & Utility** | `PING`, `ECHO`, `COMMAND`, `COMMAND DOCS`, `COMMAND COUNT` | Connection testing, message echo, and redis-cli handshake |
-| **Key-Value Store** | `SET`, `GET`, `DEL`, `EXISTS`, `INCR`, `TYPE`, `FLUSHALL` | String manipulation, integer counters, bulk queries, deletion |
+| **Key-Value Store** | `SET`, `GET`, `DEL`, `UNLINK`, `EXISTS`, `INCR`, `TYPE`, `FLUSHALL` | String manipulation, integer counters, bulk queries, synchronous deletion, and asynchronous background lazy-free (`UNLINK`) |
 | **TTL & Expiry** | `EXPIRE`, `TTL`, `PERSIST` | Key expiration in seconds, TTL querying, TTL removal |
 | **Persistence** | `SAVE`, `BGSAVE` | Synchronous snapshotting and non-blocking background snapshotting |
 
@@ -150,13 +158,13 @@ cmake --build build -j$(nproc)
 ```bash
 ctest --test-dir build --output-on-failure
 ```
-Runs test suites covering RESP parsing, state transitions, data store operations, active/lazy TTL expiry, self-healing config, and RDB snapshot serialization/checksum verification.
+Runs test suites covering RESP parsing, state transitions, data store operations, active/lazy TTL expiry, self-healing config, RDB snapshot serialization/checksum verification, and background I/O (BIO) worker threads.
 
 ### Running End-to-End Network Tests
 ```bash
 python3 tests/test_server_e2e.py
 ```
-Validates real socket communication, protocol serialization, pipeline execution, client idle timeouts, active expiry sweeps, concurrency, and persistence recovery upon server restart.
+Validates real socket communication, protocol serialization, pipeline execution, client idle timeouts, active expiry sweeps, concurrency, asynchronous lazy free (`UNLINK`), and persistence recovery upon server restart.
 
 ### Running the Benchmark Suite
 ```bash
@@ -175,6 +183,7 @@ Validates real socket communication, protocol serialization, pipeline execution,
 mini-redis/
 ├── README.md                      # Project documentation and architecture guide
 ├── redis-clone-requirements.md    # Functional & non-functional requirements
+├── thread.md                      # Comprehensive systems guide: Threads, Concurrency & OS
 └── mini-redis-cpp/                # Core C++20 implementation
     ├── CMakeLists.txt             # Root CMake build file
     ├── mini-redis.conf            # Self-healing configuration file
@@ -187,19 +196,20 @@ mini-redis/
     │   │   └── benchmark.cpp      # Native high-performance benchmark tool
     │   ├── commands/
     │   │   ├── dispatcher.hpp/.cpp# Command routing and arity validation
-    │   │   └── handlers.hpp/.cpp  # Command logic (SET, GET, TTL, SAVE, etc.)
+    │   │   └── handlers.hpp/.cpp  # Command logic (SET, GET, TTL, UNLINK, SAVE, etc.)
     │   ├── config/
     │   │   └── config.hpp/.cpp    # Configuration loader & self-healing engine
     │   ├── protocol/
     │   │   ├── resp_parser.hpp/.cpp    # RESP2 streaming state machine
     │   │   └── resp_serializer.hpp/.cpp# RESP2 protocol serializer
     │   ├── server/
+    │   │   ├── bio.hpp/.cpp       # Background I/O (BIO) thread pool & lazy-free engine
     │   │   ├── connection.hpp/.cpp# Per-client buffers and parser state
     │   │   ├── event_loop.hpp/.cpp# epoll event loop & timerfd handler
     │   │   ├── listener.hpp/.cpp  # TCP socket binding & listen
     │   │   └── logging.hpp        # Fast zero-dependency structured logger
     │   ├── store/
-    │   │   ├── data_store.hpp/.cpp# In-memory key-value hash table
+    │   │   ├── data_store.hpp/.cpp# In-memory key-value hash table (O(1) extract node)
     │   │   ├── expiry.hpp/.cpp    # Active & lazy TTL eviction manager
     │   │   └── rdb.hpp/.cpp       # RDB snapshot serialization & COW engine
     │   └── main.cpp               # CLI parsing, signal handling, entry point
@@ -210,6 +220,7 @@ mini-redis/
         ├── test_expiry.cpp        # Unit tests: TTL active & lazy eviction
         ├── test_config.cpp        # Unit tests: self-healing configuration
         ├── test_rdb.cpp           # Unit tests: snapshot, checksum, bgsave
+        ├── test_bio.cpp           # Unit tests: background I/O thread pool & async lazy free
         └── test_server_e2e.py     # Python E2E socket integration tests
 ```
 
