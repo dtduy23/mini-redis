@@ -70,7 +70,7 @@ flowchart TD
     end
 
     subgraph BIO ["Background I/O (BIO) Engine"]
-        DataStore -->|UNLINK extract node O(1)| BioMgr[BioManager Workers]
+        DataStore -->|"UNLINK extract node O(1)"| BioMgr[BioManager Workers]
         BioMgr -->|Async Lazy Free| BackgroundThreads[std::jthread Pool]
     end
 
