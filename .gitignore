@@ -73,3 +73,12 @@ appendonly.aof
 *.aof
 
 redis-clone-requirements.md
+__pycache__/
+
+# Interview & technical deep dive documentation
+docs
+docs/
+mini-redis-cpp/docs/technical_deep_dive.md
+mini-redis-cpp/docs/technical_interview_guide.md
+mini-redis-cpp/docs/tradeoffs_edgecases_extensions.md
+thread.md

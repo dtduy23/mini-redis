@@ -30,6 +30,16 @@ Designed to demonstrate systems-level software engineering: low-level socket pro
 
 ---
 
+## Technical Documentation & Engineering Guides
+
+For in-depth systems architecture analysis and senior/staff systems engineering interview preparation:
+- 📘 **[Technical Deep Dive (Chuyên Khảo Kiến Trúc & Kỹ Thuật Hệ Thống)](mini-redis-cpp/docs/technical_deep_dive.md)**: Exhaustive engineering guide covering all 8 architectural layers (POSIX non-blocking I/O, Level-Triggered `epoll` on-demand `EPOLLOUT`, RESP2 DFA streaming parser, C++20 heterogeneous lookup, C++17 $\mathcal{O}(1)$ node extraction, Redis 4.0 BIO worker pool, dual expiry engine with 10Hz `timerfd`, Linux `fork()` Copy-On-Write persistence, and self-healing configuration).
+- 🎯 **[Technical Interview Guide (36 Chuyên Đề Phỏng Vấn Chuyên Sâu)](mini-redis-cpp/docs/technical_interview_guide.md)**: Staff/Senior level interview questions and deep-dive answers covering kernel internals, race conditions, memory safety, socket options, and distributed system design.
+- 🚀 **[Trade-offs, Edge Cases & Extension Blueprints (Báo Cáo Chuyên Khảo Staff Engineer)](mini-redis-cpp/docs/tradeoffs_edgecases_extensions.md)**: In-depth technical guide covering core design trade-offs (`epoll` vs `io_uring`, C++20 vs Rust/Go/C99, single-threaded vs multi-threaded I/O, `std::unordered_map` vs `dict.c` incremental rehash, POSIX `timerfd` vs timing wheels, COW `fork()` vs lock-based threads), Linux kernel traps & quirky edge cases (NTP jump, BGSAVE OOM killer, `SIGPIPE` / `SO_LINGER 0`, pipelined `UNLINK`, multi-thread `fork()` deadlocks), and production blueprints for future extensions (AOF & AOF Rewrite, Redis 6.0 Threaded I/O, Pub/Sub, `MULTI`/`EXEC`/`WATCH`, `maxmemory` + Approximated LRU/LFU, Master-Replica Replication `PSYNC`, and Linux `io_uring`).
+- 📋 **[Functional Requirements & Spec](mini-redis-cpp/docs/requirements.md)**: Detailed specifications and documentation index.
+
+---
+
 ## Architecture Overview
 
 ```mermaid
@@ -190,7 +200,10 @@ mini-redis/
     ├── benchmarks/
     │   └── results.md             # Benchmark numbers, percentiles, analysis
     ├── docs/
-    │   └── requirements.md        # Detailed requirements specification
+    │   ├── technical_deep_dive.md     # Exhaustive systems architecture & engineering guide
+    │   ├── technical_interview_guide.md # 36 top technical interview Q&A (Senior/Staff)
+    │   ├── tradeoffs_edgecases_extensions.md # Staff guide: Trade-offs, edge cases & evolution blueprints
+    │   └── requirements.md            # Detailed requirements specification & doc index
     ├── src/
     │   ├── benchmark/
     │   │   └── benchmark.cpp      # Native high-performance benchmark tool

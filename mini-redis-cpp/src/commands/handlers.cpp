@@ -89,6 +89,14 @@ void Handlers::handle_expire(const std::vector<std::string>& cmd, DataStore& sto
         return;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+    const auto max_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        ExpiryManager::TimePoint::max() - now).count();
+    if (seconds > max_seconds) {
+        out += RespSerializer::serialize_error("invalid expire time in 'expire' command");
+        return;
+    }
+
     if (!store.exists(cmd[1])) {
         out += RespSerializer::serialize_integer(0);
         return;
@@ -100,7 +108,7 @@ void Handlers::handle_expire(const std::vector<std::string>& cmd, DataStore& sto
         return;
     }
 
-    store.expiry().set_expiry(cmd[1], std::chrono::seconds(seconds));
+    store.expiry().set_expiry(cmd[1], std::chrono::seconds(seconds), now);
     out += RespSerializer::serialize_integer(1);
 }
 
@@ -121,6 +129,10 @@ void Handlers::handle_persist(const std::vector<std::string>& cmd, DataStore& st
 }
 
 void Handlers::handle_save(const std::vector<std::string>& /*cmd*/, DataStore& store, std::string& out) {
+    if (RdbManager::is_bgsave_running()) {
+        out += RespSerializer::serialize_error("Background save already in progress");
+        return;
+    }
     std::string err;
     if (RdbManager::save("dump.rdb", store, err)) {
         out += RespSerializer::serialize_ok();
@@ -168,4 +180,3 @@ void Handlers::handle_command(const std::vector<std::string>& cmd, DataStore& /*
 }
 
 }  // namespace mini_redis
-

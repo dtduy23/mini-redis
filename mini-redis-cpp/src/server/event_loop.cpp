@@ -21,8 +21,12 @@ namespace mini_redis {
 
 // ─── Constructor / Destructor ─────────────────────────────────────────────────
 
-EventLoop::EventLoop(int server_fd)
-    : epoll_fd_(-1), server_fd_(server_fd), timer_fd_(-1) {
+EventLoop::EventLoop(int server_fd, const ServerConfig& config)
+    : epoll_fd_(-1), server_fd_(server_fd), timer_fd_(-1),
+      client_idle_timeout_(config.client_idle_timeout),
+      max_buffer_size_(config.max_buffer_size),
+      active_expire_interval_ms_(config.active_expire_interval_ms),
+      compact_threshold_(config.compact_threshold), shrink_threshold_(config.shrink_threshold) {
     Logger logger;
 
     // Tạo epoll instance
@@ -47,10 +51,9 @@ EventLoop::EventLoop(int server_fd)
     }
 
     itimerspec its{};
-    its.it_interval.tv_sec = 0;
-    its.it_interval.tv_nsec = TIMER_INTERVAL_MS * 1000000LL;
-    its.it_value.tv_sec = 0;
-    its.it_value.tv_nsec = TIMER_INTERVAL_MS * 1000000LL;
+    its.it_interval.tv_sec = active_expire_interval_ms_ / 1000;
+    its.it_interval.tv_nsec = (active_expire_interval_ms_ % 1000) * 1000000LL;
+    its.it_value = its.it_interval;
 
     if (::timerfd_settime(timer_fd_, 0, &its, nullptr) < 0) {
         ::close(timer_fd_);
@@ -62,7 +65,7 @@ EventLoop::EventLoop(int server_fd)
     epoll_add(timer_fd_);
 
     logger.debug("epoll created (fd={}), watching server_fd={}, timer_fd={} (interval={}ms)",
-                 epoll_fd_, server_fd_, timer_fd_, TIMER_INTERVAL_MS);
+                 epoll_fd_, server_fd_, timer_fd_, active_expire_interval_ms_);
 }
 
 EventLoop::~EventLoop() {
@@ -115,13 +118,13 @@ void EventLoop::run(std::atomic<bool>& running) {
             }
 
             // Lỗi hoặc peer đóng kết nối đột ngột
-            if (ev & (EPOLLHUP | EPOLLERR)) {
+            if (ev & EPOLLERR) {
                 close_client(fd);
                 continue;
             }
 
             // Dữ liệu đến từ client
-            if (ev & EPOLLIN) {
+            if (ev & (EPOLLIN | EPOLLHUP)) {
                 on_client_data(fd);
             }
 
@@ -179,7 +182,8 @@ void EventLoop::on_new_client() {
 
         // Lưu vào map và đăng ký vào epoll
         connections_.emplace(client_fd,
-                             Connection(client_fd, std::move(peer_ip), peer_port));
+                             Connection(client_fd, std::move(peer_ip), peer_port,
+                                        max_buffer_size_, compact_threshold_, shrink_threshold_));
         epoll_add(client_fd);
     }
 }
@@ -197,6 +201,7 @@ void EventLoop::on_client_data(int client_fd) {
     if (it == connections_.end()) return;  // fd lạ, bỏ qua
 
     Connection& conn = it->second;
+    if (conn.read_closed() || !conn.write_buf().empty()) return;
     char buf[RECV_BUF_SIZE];
 
     while (true) {
@@ -204,7 +209,10 @@ void EventLoop::on_client_data(int client_fd) {
 
         if (n > 0) {
             // Kiểm tra giới hạn buffer để phòng chống DoS tràn RAM
-            if (conn.read_buf().size() + static_cast<size_t>(n) > max_buffer_size_) {
+            const size_t retained = conn.parser().buffered_bytes();
+            const size_t unread = conn.unparsed_view().size();
+            if (retained > max_buffer_size_ || unread > max_buffer_size_ - retained ||
+                static_cast<size_t>(n) > max_buffer_size_ - retained - unread) {
                 logger.warning("Client fd={} exceeded max_buffer_size ({} bytes), disconnecting",
                                client_fd, max_buffer_size_);
                 close_client(client_fd);
@@ -216,9 +224,9 @@ void EventLoop::on_client_data(int client_fd) {
             conn.update_last_active();
 
         } else if (n == 0) {
-            // Client đóng kết nối bình thường (gửi FIN)
-            close_client(client_fd);
-            return;
+            // FIN chỉ đóng chiều nhận; vẫn xử lý lệnh và gửi phản hồi đã nhận.
+            conn.mark_read_closed();
+            break;
 
         } else {
             // n < 0
@@ -226,6 +234,7 @@ void EventLoop::on_client_data(int client_fd) {
                 // Hết data tạm thời — đợi epoll báo lần sau
                 break;
             }
+            if (errno == EINTR) continue;
             // Lỗi mạng thật sự
             logger.warning("recv() error on fd={}: {}", client_fd, std::strerror(errno));
             close_client(client_fd);
@@ -233,11 +242,24 @@ void EventLoop::on_client_data(int client_fd) {
         }
     }
 
-    // Parse và dispatch các lệnh RESP
+    process_client_commands(client_fd);
+}
+
+void EventLoop::process_client_commands(int client_fd) {
+    Logger logger;
     while (true) {
+        // Chỉ tạo phản hồi tiếp theo khi phản hồi trước đã gửi xong.
+        try_flush(client_fd);
+        auto it = connections_.find(client_fd);
+        if (it == connections_.end()) return;
+        Connection& conn = it->second;
+        if (!conn.write_buf().empty()) return;
+
         std::string_view unparsed = conn.unparsed_view();
         if (unparsed.empty()) {
-            break;
+            conn.maybe_compact();
+            if (conn.read_closed()) close_client(client_fd);
+            return;
         }
 
         size_t bytes_consumed = 0;
@@ -248,31 +270,34 @@ void EventLoop::on_client_data(int client_fd) {
         conn.consume(bytes_consumed);
 
         if (res == ParseResult::Ok) {
-            dispatcher_.dispatch(cmd, store_, conn.write_buf());
+            dispatcher_.dispatch(cmd, store_, conn.write_buf(), max_buffer_size_);
+            if (conn.write_buf().size() > max_buffer_size_) {
+                logger.warning("Client fd={} exceeded output buffer limit, disconnecting", client_fd);
+                close_client(client_fd);
+                return;
+            }
+            conn.maybe_compact();
         } else if (res == ParseResult::Incomplete) {
-            break;
+            conn.maybe_compact();
+            if (conn.read_closed()) close_client(client_fd);
+            return;
         } else {  // ParseResult::Error
             logger.warning("Protocol error from fd={}: {}", client_fd, err);
             conn.write_buf() += RespSerializer::serialize_error(err);
-            try_flush(client_fd);
-            close_client(client_fd);
-            return;
+            conn.mark_read_closed();
+            conn.read_buf().clear();
+            conn.maybe_compact();
         }
     }
-
-    conn.maybe_compact();
-
-    // Flush write_buf sau khi xử lý xong
-    try_flush(client_fd);
 }
 
 // ─── on_client_writable() ─────────────────────────────────────────────────────────────
 //
 // Được gọi khi epoll báo EPOLLOUT: kernel buffer đã rỗng, có thể tiếp tục gửi.
-// Chỉ tiếp tục flush phần còn lại trong write_buf.
+// Flush phần còn lại, sau đó tiếp tục các lệnh đang chờ trong read_buf.
 
 void EventLoop::on_client_writable(int client_fd) {
-    try_flush(client_fd);
+    process_client_commands(client_fd);
 }
 
 // ─── try_flush() ──────────────────────────────────────────────────────────────────────
@@ -304,6 +329,7 @@ void EventLoop::try_flush(int client_fd) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;  // kernel buffer đầy, dừng — chờ EPOLLOUT
             }
+            if (errno == EINTR) continue;
             // Lỗi mạng thật sự
             logger.warning("send() error on fd={}: {}", client_fd, std::strerror(errno));
             close_client(client_fd);
@@ -318,9 +344,9 @@ void EventLoop::try_flush(int client_fd) {
 
     // Cập nhật epoll: còn data → giữ EPOLLOUT; xong → bỏ EPOLLOUT
     if (wbuf.empty()) {
-        epoll_mod(client_fd, EPOLLIN);             // chỉ theo dõi read
+        epoll_mod(client_fd, conn.read_closed() ? 0u : static_cast<uint32_t>(EPOLLIN));
     } else {
-        epoll_mod(client_fd, EPOLLIN | EPOLLOUT);  // chờ có chỗ trống để tiếp tục gửi
+        epoll_mod(client_fd, EPOLLOUT);  // tạm ngừng nhận khi client đọc chậm
     }
 }
 

@@ -4,8 +4,12 @@
 
 namespace mini_redis {
 
-Connection::Connection(int fd, std::string peer_ip, uint16_t peer_port)
-    : fd_(fd), peer_ip_(std::move(peer_ip)), peer_port_(peer_port) {
+Connection::Connection(int fd, std::string peer_ip, uint16_t peer_port,
+                       size_t max_buffer_size, size_t compact_threshold,
+                       size_t shrink_threshold)
+    : fd_(fd), peer_ip_(std::move(peer_ip)), peer_port_(peer_port),
+      parser_(max_buffer_size), compact_threshold_(compact_threshold),
+      shrink_threshold_(shrink_threshold) {
     read_buf_.reserve(DEFAULT_BUF_CAPACITY);
     write_buf_.reserve(DEFAULT_BUF_CAPACITY);
 }
@@ -22,6 +26,9 @@ Connection::Connection(Connection&& other) noexcept
       write_buf_(std::move(other.write_buf_)),
       read_offset_(other.read_offset_),
       parser_(std::move(other.parser_)),
+      compact_threshold_(other.compact_threshold_),
+      shrink_threshold_(other.shrink_threshold_),
+      read_closed_(other.read_closed_),
       last_active_(other.last_active_) {
     other.fd_          = -1;
     other.read_offset_ = 0;
@@ -37,6 +44,9 @@ Connection& Connection::operator=(Connection&& other) noexcept {
         write_buf_   = std::move(other.write_buf_);
         read_offset_ = other.read_offset_;
         parser_      = std::move(other.parser_);
+        compact_threshold_ = other.compact_threshold_;
+        shrink_threshold_ = other.shrink_threshold_;
+        read_closed_ = other.read_closed_;
         last_active_ = other.last_active_;
         other.fd_          = -1;
         other.read_offset_ = 0;
@@ -64,11 +74,11 @@ void Connection::maybe_compact() {
         read_offset_ = 0;
 
         // Nếu dung lượng phình to bất thường do payload lớn, giải phóng bớt về cho OS
-        if (read_buf_.capacity() > SHRINK_THRESHOLD) {
+        if (read_buf_.capacity() > shrink_threshold_) {
             read_buf_.shrink_to_fit();
             read_buf_.reserve(DEFAULT_BUF_CAPACITY);
         }
-    } else if (read_offset_ > COMPACT_THRESHOLD || read_offset_ > read_buf_.capacity() / 2) {
+    } else if (read_offset_ > compact_threshold_ || read_offset_ > read_buf_.capacity() / 2) {
         // Con trỏ trôi quá xa, dời phần dở dang về đầu buffer (O(1) amortized)
         read_buf_.erase(0, read_offset_);
         read_offset_ = 0;

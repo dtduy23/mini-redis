@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mini_redis {
@@ -37,7 +38,13 @@ public:
     static constexpr int64_t MAX_ARGS      = 1024 * 1024;       // Số đối số tối đa cho 1 lệnh
     static constexpr int64_t MAX_BULK_LEN  = 512 * 1024 * 1024; // 512MB giới hạn tối đa cho 1 Bulk String
 
-    RespParser() = default;
+    explicit RespParser(size_t max_command_size = MAX_BULK_LEN)
+        : max_command_size_(max_command_size) {}
+
+    // Bộ nhớ dành cho các đối số của lệnh đang parse, gồm cả vector slots.
+    size_t buffered_bytes() const noexcept {
+        return current_args_.capacity() * sizeof(std::string) + payload_bytes_;
+    }
 
     // Parse 1 lệnh từ input (string_view) mà không copy hay chỉnh sửa buffer.
     // - bytes_consumed: số byte đã parse thành công trong lần gọi này (để caller dịch con trỏ).
@@ -60,6 +67,8 @@ private:
     int64_t                  expected_args_{-1};
     int64_t                  expected_bulk_len_{-1};
     std::vector<std::string> current_args_;
+    size_t max_command_size_;
+    size_t payload_bytes_{0};
 };
 
 }  // namespace mini_redis

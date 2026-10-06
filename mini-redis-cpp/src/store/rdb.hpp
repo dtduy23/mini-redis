@@ -22,7 +22,8 @@ public:
     // Lưu snapshot đồng bộ ra file RDB (ghi file tạm trước rồi atomic rename)
     static bool save(const std::string& filepath, const DataStore& store, std::string& out_err);
 
-    // Nạp dữ liệu từ file RDB vào DataStore (bỏ qua key đã hết hạn)
+    // Thay DataStore bằng snapshot đã xác thực (bỏ qua key đã hết hạn).
+    // Nếu lỗi, DataStore không bị thay đổi và out_loaded = 0.
     static bool load(const std::string& filepath, DataStore& store, size_t& out_loaded, std::string& out_err);
 
     // Quản lý trạng thái Background Save (BGSAVE fork)
@@ -36,4 +37,3 @@ private:
 };
 
 }  // namespace mini_redis
-

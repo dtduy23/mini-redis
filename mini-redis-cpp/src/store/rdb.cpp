@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 #include <unistd.h>
 
 namespace mini_redis {
@@ -131,6 +132,8 @@ bool RdbManager::save(const std::string& filepath, const DataStore& store, std::
 
 bool RdbManager::load(const std::string& filepath, DataStore& store, size_t& out_loaded, std::string& out_err) {
     out_loaded = 0;
+    DataStore restored;
+    size_t loaded = 0;
     std::error_code ec;
     if (!std::filesystem::exists(filepath, ec)) {
         out_err = "RDB file not found: " + filepath;
@@ -225,8 +228,8 @@ bool RdbManager::load(const std::string& filepath, DataStore& store, size_t& out
             return false;
         }
 
-        store.restore_key(std::move(key), std::move(val), expire_epoch_ms);
-        out_loaded++;
+        restored.restore_key(std::move(key), std::move(val), expire_epoch_ms);
+        loaded++;
     }
 
     if (!saw_eof) {
@@ -234,6 +237,8 @@ bool RdbManager::load(const std::string& filepath, DataStore& store, size_t& out
         return false;
     }
 
+    store = std::move(restored);
+    out_loaded = loaded;
     return true;
 }
 

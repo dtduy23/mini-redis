@@ -172,11 +172,56 @@ bool test_rdb_corrupted_checksum() {
     }
 
     DataStore store2;
+    store2.set("sentinel", "existing");
+    store2.expiry().set_expiry("sentinel", std::chrono::seconds(60));
     size_t loaded = 0;
     ok = RdbManager::load(path, store2, loaded, err);
     TEST_ASSERT(!ok, "load should fail on checksum mismatch");
     TEST_ASSERT(err.find("checksum") != std::string::npos, "error reports checksum mismatch");
+    TEST_ASSERT(loaded == 0, "failed load publishes no loaded keys");
+    TEST_ASSERT(!store2.exists("foo"), "unverified key is not published");
+    TEST_ASSERT(store2.get("sentinel") && *store2.get("sentinel") == "existing", "existing data preserved");
+    TEST_ASSERT(store2.expiry().get_ttl_seconds("sentinel", true) > 0, "existing TTL preserved");
 
+    return true;
+}
+
+bool test_rdb_truncated_load_is_atomic() {
+    const std::string path = TEST_RDB_DIR + "/truncated.rdb";
+    DataStore snapshot;
+    snapshot.set("foo", "bar");
+    std::string err;
+    TEST_ASSERT(RdbManager::save(path, snapshot, err), "save succeeded");
+    std::filesystem::resize_file(path, std::filesystem::file_size(path) - 9);
+
+    DataStore store;
+    store.set("foo", "original");
+    size_t loaded = 0;
+    TEST_ASSERT(!RdbManager::load(path, store, loaded, err), "truncated snapshot rejected");
+    TEST_ASSERT(loaded == 0 && *store.get("foo") == "original", "failed load leaves existing value intact");
+    return true;
+}
+
+bool test_save_rejected_during_bgsave() {
+    DataStore store;
+    store.set("key", "old");
+    std::string err;
+    TEST_ASSERT(RdbManager::save("dump.rdb", store, err), "initial snapshot saved");
+    store.set("key", "new");
+    Dispatcher dispatcher;
+    std::string out;
+    RdbManager::set_bgsave_pid(4242);
+    dispatcher.dispatch({"SAVE"}, store, out);
+    RdbManager::reset_bgsave_pid();
+    TEST_ASSERT(out == "-ERR Background save already in progress\r\n", "concurrent SAVE rejected");
+
+    DataStore loaded;
+    size_t count = 0;
+    TEST_ASSERT(RdbManager::load("dump.rdb", loaded, count, err), "original snapshot still valid");
+    TEST_ASSERT(loaded.get("key") && *loaded.get("key") == "old", "rejected SAVE did not write");
+    out.clear();
+    dispatcher.dispatch({"SAVE"}, store, out);
+    TEST_ASSERT(out == "+OK\r\n", "SAVE succeeds after BGSAVE ends");
     return true;
 }
 
@@ -238,8 +283,10 @@ int main() {
     RUN_TEST(test_rdb_expired_keys_discarded);
     RUN_TEST(test_rdb_corrupted_magic);
     RUN_TEST(test_rdb_corrupted_checksum);
+    RUN_TEST(test_rdb_truncated_load_is_atomic);
     RUN_TEST(test_rdb_bgsave_state_tracking);
     RUN_TEST(test_rdb_dispatcher_commands);
+    RUN_TEST(test_save_rejected_during_bgsave);
 
     cleanup_rdb_dir();
 
@@ -249,4 +296,3 @@ int main() {
 
     return (g_tests_passed == g_tests_run) ? 0 : 1;
 }
-

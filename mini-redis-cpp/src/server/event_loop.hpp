@@ -2,6 +2,7 @@
 
 #include "connection.hpp"
 #include "commands/dispatcher.hpp"
+#include "config/config.hpp"
 #include "store/data_store.hpp"
 
 #include <atomic>
@@ -33,7 +34,7 @@ public:
     static constexpr int    TIMER_INTERVAL_MS = 100;             // Chu kỳ nhịp đập 100ms (10Hz)
     static constexpr std::chrono::seconds DEFAULT_CLIENT_IDLE_TIMEOUT{300}; // 300s mặc định
 
-    explicit EventLoop(int server_fd);
+    explicit EventLoop(int server_fd, const ServerConfig& config = ServerConfig{});
     ~EventLoop();
 
     // Không copy, không move — quản lý epoll_fd và timer_fd
@@ -68,6 +69,9 @@ private:
     int timer_fd_{-1};
     std::chrono::seconds client_idle_timeout_{DEFAULT_CLIENT_IDLE_TIMEOUT};
     size_t max_buffer_size_{MAX_BUFFER_SIZE};
+    int active_expire_interval_ms_{TIMER_INTERVAL_MS};
+    size_t compact_threshold_{Connection::COMPACT_THRESHOLD};
+    size_t shrink_threshold_{Connection::SHRINK_THRESHOLD};
 
     // Lưu tất cả client đang kết nối, key = file descriptor
     std::unordered_map<int, Connection> connections_;
@@ -92,6 +96,9 @@ private:
 
     // Xử lý khi client_fd có sự kiện đọc
     void on_client_data(int client_fd);
+
+    // Xử lý lệnh đã nhận; tạm dừng khi phản hồi trước còn chờ gửi.
+    void process_client_commands(int client_fd);
 
     // Xử lý khi client_fd sẵn sàng ghi (EPOLLOUT)
     void on_client_writable(int client_fd);

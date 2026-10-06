@@ -25,9 +25,14 @@ Listener::Listener(const ServerConfig& config)
 {
     Logger logger;
     logger.debug("Initializing server on {}:{}", config_.bind_address, config_.port);
-    create_socket();
-    bind_socket();
-    start_listen();
+    try {
+        create_socket();
+        bind_socket();
+        start_listen();
+    } catch (...) {
+        if (server_fd_ >= 0) ::close(server_fd_);
+        throw;
+    }
 }
 
 Listener::Listener(int port, std::chrono::seconds idle_timeout)
@@ -39,9 +44,14 @@ Listener::Listener(int port, std::chrono::seconds idle_timeout)
     config_.client_idle_timeout = idle_timeout;
     Logger logger;
     logger.debug("Initializing server on port {}", config_.port);
-    create_socket();
-    bind_socket();
-    start_listen();
+    try {
+        create_socket();
+        bind_socket();
+        start_listen();
+    } catch (...) {
+        if (server_fd_ >= 0) ::close(server_fd_);
+        throw;
+    }
 }
 
 // ─── Destructor ───────────────────────────────────────────────────────────────
@@ -65,9 +75,7 @@ void Listener::run() {
     logger.info("mini-redis listening on {}:{} (O_NONBLOCK + epoll, idle_timeout={}s)",
                 config_.bind_address, config_.port, config_.client_idle_timeout.count());
 
-    EventLoop loop(server_fd_);
-    loop.set_client_idle_timeout(config_.client_idle_timeout);
-    loop.set_max_buffer_size(config_.max_buffer_size);
+    EventLoop loop(server_fd_, config_);
 
     // Tự động khôi phục dữ liệu từ snapshot dump.rdb nếu có
     if (std::filesystem::exists("dump.rdb")) {
@@ -122,13 +130,8 @@ void Listener::bind_socket() {
     address_.sin_family      = AF_INET;
     address_.sin_port        = ::htons(config_.port);
 
-    if (config_.bind_address.empty() || config_.bind_address == "0.0.0.0") {
-        address_.sin_addr.s_addr = INADDR_ANY;
-    } else {
-        if (::inet_pton(AF_INET, config_.bind_address.c_str(), &address_.sin_addr) <= 0) {
-            logger.warning("Invalid bind address '{}', defaulting to INADDR_ANY", config_.bind_address);
-            address_.sin_addr.s_addr = INADDR_ANY;
-        }
+    if (::inet_pton(AF_INET, config_.bind_address.c_str(), &address_.sin_addr) != 1) {
+        throw std::invalid_argument("Invalid IPv4 bind address: " + config_.bind_address);
     }
 
     if (::bind(server_fd_,

@@ -90,9 +90,9 @@ def test_1_configurable_port_and_reuseaddr():
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((HOST, custom_port))
-    s.sendall(b"PING\n")
+    s.sendall(b"*1\r\n$4\r\nPING\r\n")
     res = s.recv(1024)
-    assert res == b"PING\n", f"Expected b'PING\\n', got {res}"
+    assert res == b"+PONG\r\n", f"Expected b'+PONG\\r\\n', got {res}"
     s.close()
     stop_server(p2)
 
@@ -114,16 +114,17 @@ def test_2_basic_echo_latency():
     s.connect((HOST, TEST_PORT))
 
     num_requests = 1000
-    msg = b"PING\r\n"
+    msg = b"*1\r\n$4\r\nPING\r\n"
+    expected_reply = b"+PONG\r\n"
     latencies = []
 
     for _ in range(num_requests):
         req_start = time.perf_counter()
         s.sendall(msg)
-        reply = recv_exact(s, len(msg))
+        reply = recv_exact(s, len(expected_reply))
         lat = (time.perf_counter() - req_start) * 1_000_000 # tính bằng microsecond (µs)
         latencies.append(lat)
-        assert reply == msg
+        assert reply == expected_reply
 
     s.close()
     total_duration = time.perf_counter() - t0
@@ -161,11 +162,13 @@ def test_3_multiple_concurrent_clients():
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((HOST, TEST_PORT))
             for m in range(msgs_per_client):
-                payload = f"CLIENT_{cid:02d}_REQ_{m:04d}\r\n".encode("utf-8")
-                s.sendall(payload)
-                reply = recv_exact(s, len(payload))
-                if reply != payload:
-                    errors.append(f"Client {cid} mismatch")
+                payload_str = f"CLIENT_{cid:02d}_REQ_{m:04d}"
+                req = f"*2\r\n$4\r\nECHO\r\n${len(payload_str)}\r\n{payload_str}\r\n".encode("utf-8")
+                expected = f"${len(payload_str)}\r\n{payload_str}\r\n".encode("utf-8")
+                s.sendall(req)
+                reply = recv_exact(s, len(expected))
+                if reply != expected:
+                    errors.append(f"Client {cid} mismatch: got {reply}, expected {expected}")
                     break
             s.close()
         except Exception as e:
@@ -198,18 +201,20 @@ def test_4_partial_reads():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((HOST, TEST_PORT))
 
-    msg = b"FRAGMENTED_STREAM_PACKET_TESTING_1234567890_ABCDEFGHIJKLMN\r\n"
-    num_bytes = len(msg)
+    raw_str = "FRAGMENTED_STREAM_PACKET_TESTING_1234567890_ABCDEFGHIJKLMN"
+    req = f"*2\r\n$4\r\nECHO\r\n${len(raw_str)}\r\n{raw_str}\r\n".encode("utf-8")
+    expected = f"${len(raw_str)}\r\n{raw_str}\r\n".encode("utf-8")
+    num_bytes = len(req)
 
     # Gửi từng byte một với độ trễ 1ms
     send_start = time.perf_counter()
-    for byte in msg:
+    for byte in req:
         s.sendall(bytes([byte]))
         time.sleep(0.001) # 1ms delay mỗi byte
     send_time = (time.perf_counter() - send_start) * 1000
 
-    reply = recv_exact(s, len(msg))
-    assert reply == msg, f"Expected {msg}, got {reply}"
+    reply = recv_exact(s, len(expected))
+    assert reply == expected, f"Expected {expected}, got {reply}"
     s.close()
     total_duration = time.perf_counter() - t0
 
@@ -234,9 +239,16 @@ def test_5_partial_writes_large_payload():
     pattern = b"0123456789ABCDEF" * (payload_size // 16)
     expected_hash = hashlib.sha256(pattern).hexdigest()
 
+    header = f"*2\r\n$4\r\nECHO\r\n${payload_size}\r\n".encode("utf-8")
+    expected_header = f"${payload_size}\r\n".encode("utf-8")
+
     transfer_start = time.perf_counter()
-    s.sendall(pattern)
+    s.sendall(header + pattern + b"\r\n")
+    received_header = recv_exact(s, len(expected_header))
+    assert received_header == expected_header
     received = recv_exact(s, payload_size)
+    crlf = recv_exact(s, 2)
+    assert crlf == b"\r\n"
     transfer_time = time.perf_counter() - transfer_start
 
     actual_hash = hashlib.sha256(received).hexdigest()
@@ -264,8 +276,8 @@ def test_6_graceful_disconnect():
     t0 = time.perf_counter()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((HOST, TEST_PORT))
-    s.sendall(b"PING\r\n")
-    recv_exact(s, 6)
+    s.sendall(b"*1\r\n$4\r\nPING\r\n")
+    assert recv_exact(s, 7) == b"+PONG\r\n"
 
     t_fin = time.perf_counter()
     s.close()
@@ -275,9 +287,9 @@ def test_6_graceful_disconnect():
     t_next = time.perf_counter()
     s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s2.connect((HOST, TEST_PORT))
-    s2.sendall(b"PING\r\n")
-    res = recv_exact(s2, 6)
-    assert res == b"PING\r\n"
+    s2.sendall(b"*1\r\n$4\r\nPING\r\n")
+    res = recv_exact(s2, 7)
+    assert res == b"+PONG\r\n"
     next_conn_time = (time.perf_counter() - t_next) * 1000
     s2.close()
 
@@ -295,7 +307,7 @@ def test_7_abrupt_disconnect_rst():
     t0 = time.perf_counter()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((HOST, TEST_PORT))
-    s.sendall(b"HELLO_BEFORE_RST\r\n")
+    s.sendall(b"*2\r\n$4\r\nECHO\r\n$16\r\nHELLO_BEFORE_RST\r\n")
 
     # Bắn cờ RST bằng SO_LINGER 0 thay vì FIN
     s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
@@ -305,9 +317,9 @@ def test_7_abrupt_disconnect_rst():
     t_check = time.perf_counter()
     s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s2.connect((HOST, TEST_PORT))
-    s2.sendall(b"HEALTH_CHECK\r\n")
-    res = recv_exact(s2, 14)
-    assert res == b"HEALTH_CHECK\r\n"
+    s2.sendall(b"*1\r\n$4\r\nPING\r\n")
+    res = recv_exact(s2, 7)
+    assert res == b"+PONG\r\n"
     recovery_time = (time.perf_counter() - t_check) * 1000
     s2.close()
 
@@ -350,9 +362,9 @@ def test_8_dos_buffer_limit():
     t_health = time.perf_counter()
     s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s2.connect((HOST, TEST_PORT))
-    s2.sendall(b"STILL_ALIVE\r\n")
-    res = recv_exact(s2, 13)
-    assert res == b"STILL_ALIVE\r\n"
+    s2.sendall(b"*1\r\n$4\r\nPING\r\n")
+    res = recv_exact(s2, 7)
+    assert res == b"+PONG\r\n"
     health_latency = (time.perf_counter() - t_health) * 1000
     s2.close()
 

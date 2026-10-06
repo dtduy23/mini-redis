@@ -345,6 +345,37 @@ bool test_dispatcher_expiry_commands() {
 }
 
 // ─── 9. Kiểm tra Client Connection last_active & Idle Timeout ────────────────
+bool test_expire_rejects_overflow_without_mutation() {
+    Dispatcher dispatcher;
+    DataStore store;
+    store.set("k", "value");
+    store.expiry().set_expiry("k", std::chrono::seconds(60));
+    const auto check_now = std::chrono::steady_clock::now();
+    const auto check_sys_now = std::chrono::system_clock::now();
+    const auto deadline = store.expiry().get_expire_epoch_ms("k", check_now, check_sys_now);
+
+    // Covers both seconds -> milliseconds and milliseconds -> clock ticks overflow.
+    for (const std::string seconds : {"9223372036854775807", "10000000000"}) {
+        std::string out;
+        dispatcher.dispatch({"EXPIRE", "k", seconds}, store, out);
+        TEST_ASSERT(out == "-ERR invalid expire time in 'expire' command\r\n", "overflow rejected");
+        TEST_ASSERT(store.get("k") && *store.get("k") == "value", "value retained");
+        const auto after = store.expiry().get_expire_epoch_ms("k", check_now, check_sys_now);
+        TEST_ASSERT(after == deadline, "previous expiry retained");
+    }
+
+    const auto max_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        ExpiryManager::TimePoint::max() - std::chrono::steady_clock::now()).count();
+    std::string out;
+    dispatcher.dispatch({"EXPIRE", "k", std::to_string(max_seconds - 1)}, store, out);
+    TEST_ASSERT(out == ":1\r\n" && store.exists("k"), "large representable expiry accepted");
+
+    out.clear();
+    dispatcher.dispatch({"EXPIRE", "k", "-9223372036854775808"}, store, out);
+    TEST_ASSERT(out == ":1\r\n" && !store.exists("k"), "negative expiry deletes without conversion");
+    return true;
+}
+
 bool test_connection_last_active_tracking() {
     Connection conn(10, "127.0.0.1", 12345);
 
@@ -375,6 +406,7 @@ int main() {
     RUN_TEST(test_active_expiry_cycle);
     RUN_TEST(test_active_expiry_mixed);
     RUN_TEST(test_dispatcher_expiry_commands);
+    RUN_TEST(test_expire_rejects_overflow_without_mutation);
     RUN_TEST(test_connection_last_active_tracking);
 
     std::cout << "========================================\n";

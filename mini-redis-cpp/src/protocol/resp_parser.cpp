@@ -27,6 +27,7 @@ void RespParser::reset() {
     expected_args_ = -1;
     expected_bulk_len_ = -1;
     current_args_.clear();
+    payload_bytes_ = 0;
 }
 
 ParseResult RespParser::parse(std::string_view input,
@@ -82,6 +83,11 @@ ParseResult RespParser::parse(std::string_view input,
             }
 
             expected_args_ = count;
+            if (static_cast<size_t>(count) > max_command_size_ / sizeof(std::string)) {
+                out_error = "Protocol error: command exceeds memory limit";
+                reset();
+                return ParseResult::Error;
+            }
             current_args_.reserve(static_cast<size_t>(count));
             state_ = ParserState::BulkLen;
             break;
@@ -118,6 +124,14 @@ ParseResult RespParser::parse(std::string_view input,
                 return ParseResult::Error;
             }
 
+            if (bulk_len >= 0 &&
+                (buffered_bytes() > max_command_size_ ||
+                 static_cast<size_t>(bulk_len) > max_command_size_ - buffered_bytes())) {
+                out_error = "Protocol error: command exceeds memory limit";
+                reset();
+                return ParseResult::Error;
+            }
+
             bytes_consumed += crlf + 2;
 
             if (bulk_len == -1) {
@@ -150,6 +164,7 @@ ParseResult RespParser::parse(std::string_view input,
             }
 
             current_args_.emplace_back(cur.data(), static_cast<size_t>(expected_bulk_len_));
+            payload_bytes_ += static_cast<size_t>(expected_bulk_len_);
             bytes_consumed += required;
 
             if (current_args_.size() == static_cast<size_t>(expected_args_)) {

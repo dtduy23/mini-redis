@@ -29,7 +29,8 @@ void Dispatcher::register_command(std::string name, int min_args, int max_args, 
     commands_[std::move(name)] = CommandDescriptor{min_args, max_args, handler};
 }
 
-void Dispatcher::dispatch(const std::vector<std::string>& cmd, DataStore& store, std::string& out) const {
+void Dispatcher::dispatch(const std::vector<std::string>& cmd, DataStore& store, std::string& out,
+                          size_t max_response_size) const {
     if (cmd.empty()) {
         return;
     }
@@ -56,6 +57,18 @@ void Dispatcher::dispatch(const std::vector<std::string>& cmd, DataStore& store,
         return;
     }
 
+    // Snapshot values can be larger than the current network buffer limit.
+    // Reject an oversized GET before allocating its serialized response.
+    if (desc.handler == Handlers::handle_get) {
+        const auto* value = store.get(cmd[1]);
+        if (value != nullptr) {
+            const size_t overhead = std::to_string(value->size()).size() + 5;
+            if (overhead > max_response_size || value->size() > max_response_size - overhead) {
+                out += RespSerializer::serialize_error("response exceeds output buffer limit");
+                return;
+            }
+        }
+    }
     desc.handler(cmd, store, out);
 }
 

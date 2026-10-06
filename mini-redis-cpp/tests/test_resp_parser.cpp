@@ -481,6 +481,48 @@ bool test_connection_buffer_management() {
     return true;
 }
 
+bool test_fragmented_command_memory_limit() {
+    RespParser parser(4096);
+    std::vector<std::string> cmd;
+    std::string err;
+    std::string buf = "*3\r\n$4\r\nECHO\r\n";
+    TEST_ASSERT(parse_str(parser, buf, cmd, err) == ParseResult::Incomplete, "partial command accepted");
+    buf = "$1500\r\n" + std::string(1500, 'x') + "\r\n";
+    TEST_ASSERT(parse_str(parser, buf, cmd, err) == ParseResult::Incomplete, "first payload retained");
+    TEST_ASSERT(parser.buffered_bytes() >= 1500, "retained payload accounted for");
+    buf = "$2500\r\n";
+    TEST_ASSERT(parse_str(parser, buf, cmd, err) == ParseResult::Error, "aggregate limit enforced before payload arrives");
+    TEST_ASSERT(parser.is_idle(), "parser resets after rejection");
+
+    buf = "*1048576\r\n";
+    TEST_ASSERT(parse_str(parser, buf, cmd, err) == ParseResult::Error, "oversized argument vector rejected before reserve");
+    buf = "*1\r\n$4\r\nPING\r\n";
+    TEST_ASSERT(parse_str(parser, buf, cmd, err) == ParseResult::Ok, "parser can recover after error");
+    return true;
+}
+
+bool test_configurable_connection_thresholds() {
+    Connection conn(-1, "127.0.0.1", 0, 4096, 1024, 8192);
+    conn.read_buf().assign(8192, 'x');
+    conn.consume(2048);
+    conn.maybe_compact();
+    TEST_ASSERT(conn.read_offset() == 0 && conn.read_buf().size() == 6144, "custom compact threshold applied");
+    conn.read_buf().assign(16384, 'x');
+    conn.consume(conn.read_buf().size());
+    conn.maybe_compact();
+    TEST_ASSERT(conn.read_buf().capacity() <= 8192, "custom shrink threshold applied");
+
+    Connection large(-1, "127.0.0.1", 0, 1024 * 1024, 32768, 256 * 1024);
+    large.read_buf().assign(100 * 1024, 'x');
+    large.mark_read_closed();
+    Connection moved(std::move(large));
+    moved.consume(moved.read_buf().size());
+    moved.maybe_compact();
+    TEST_ASSERT(moved.read_buf().capacity() >= 100 * 1024, "move preserves custom shrink threshold");
+    TEST_ASSERT(moved.read_closed(), "move preserves EOF state");
+    return true;
+}
+
 int main() {
     std::cout << "========================================\n";
     std::cout << "  RUNNING RESP PARSER & SERIALIZER TESTS\n";
@@ -495,6 +537,8 @@ int main() {
     RUN_TEST(test_large_payload_and_utf8);
     RUN_TEST(test_variable_chunk_streaming);
     RUN_TEST(test_connection_buffer_management);
+    RUN_TEST(test_fragmented_command_memory_limit);
+    RUN_TEST(test_configurable_connection_thresholds);
 
     std::cout << "========================================\n";
     std::cout << "Results: " << g_tests_passed << "/" << g_tests_run << " tests passed.\n";

@@ -22,7 +22,10 @@ public:
     static constexpr size_t COMPACT_THRESHOLD    = 32 * 1024; // 32KB: dọn dẹp phần dở dang
     static constexpr size_t SHRINK_THRESHOLD     = 64 * 1024; // 64KB: thu hồi RAM khi rảnh
 
-    Connection(int fd, std::string peer_ip, uint16_t peer_port);
+    Connection(int fd, std::string peer_ip, uint16_t peer_port,
+               size_t max_buffer_size = 1024 * 1024,
+               size_t compact_threshold = COMPACT_THRESHOLD,
+               size_t shrink_threshold = SHRINK_THRESHOLD);
     ~Connection();
 
     // Không copy — sở hữu fd
@@ -59,6 +62,9 @@ public:
     // Dọn dẹp buffer định kỳ và thu hồi RAM khi vượt ngưỡng (Elastic Buffer)
     void maybe_compact();
 
+    bool read_closed() const noexcept { return read_closed_; }
+    void mark_read_closed() noexcept { read_closed_ = true; }
+
     // Cập nhật thời điểm hoạt động cuối (chống idle timeout)
     void update_last_active() noexcept;
     std::chrono::steady_clock::time_point last_active() const noexcept;
@@ -73,6 +79,9 @@ private:
     std::string write_buf_;  // dữ liệu chờ gửi đi
     size_t      read_offset_{0}; // Con trỏ trỏ vào byte tiếp theo cần parse
     RespParser  parser_;     // parser state machine
+    size_t compact_threshold_;
+    size_t shrink_threshold_;
+    bool read_closed_{false};
     std::chrono::steady_clock::time_point last_active_{std::chrono::steady_clock::now()};
 };
 

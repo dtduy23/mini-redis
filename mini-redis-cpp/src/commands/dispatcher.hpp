@@ -2,6 +2,7 @@
 
 #include "store/data_store.hpp"
 
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,7 +22,8 @@ public:
     Dispatcher();
 
     // Điều hướng lệnh đến handler tương ứng, ghi kết quả RESP vào out
-    void dispatch(const std::vector<std::string>& cmd, DataStore& store, std::string& out) const;
+    void dispatch(const std::vector<std::string>& cmd, DataStore& store, std::string& out,
+                  size_t max_response_size = std::numeric_limits<size_t>::max()) const;
 
     // Đăng ký lệnh mới vào bảng điều hướng
     void register_command(std::string name, int min_args, int max_args, CommandHandler handler);
